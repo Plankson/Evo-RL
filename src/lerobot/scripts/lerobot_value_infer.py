@@ -440,10 +440,12 @@ def _export_visualization_outputs(
         indicator_field=cfg.acp.indicator_field,
         viz_episodes=cfg.viz.episodes,
         video_key=cfg.viz.video_key,
+        video_keys=cfg.viz.video_keys,
         output_dir=viz_output_dir,
         overwrite=cfg.viz.overwrite,
         vcodec=cfg.viz.vcodec,
         frame_storage_mode=cfg.viz.frame_storage_mode,
+        smooth_window=cfg.viz.smooth_window,
     )
     logging.info("Exported %d overlay videos to %s", len(written_videos), viz_output_dir)
     return [str(path) for path in written_videos]

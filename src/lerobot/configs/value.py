@@ -93,9 +93,11 @@ class ValueInferenceVizConfig:
     enable: bool = False
     episodes: str = "all"
     video_key: str | None = None
+    video_keys: str | None = None
     overwrite: bool = False
     vcodec: str = "libsvtav1"
     frame_storage_mode: str = "memory"
+    smooth_window: int = 1
 
     def validate(self) -> None:
         if not self.episodes:
@@ -104,6 +106,8 @@ class ValueInferenceVizConfig:
             raise ValueError("'viz.vcodec' must be non-empty.")
         if self.frame_storage_mode not in {"memory", "disk"}:
             raise ValueError("'viz.frame_storage_mode' must be one of {'memory', 'disk'}.")
+        if self.smooth_window < 1:
+            raise ValueError("'viz.smooth_window' must be >= 1. Use 1 to disable smoothing.")
 
 
 @dataclass
