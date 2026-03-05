@@ -207,7 +207,11 @@ So first run `lerobot-setup-can` to confirm CAN interfaces are available:
 lerobot-setup-can --mode=setup --interfaces=can0,can1
 ```
 
-PiPER does not use `lerobot-calibrate`, and if you switch master/follower roles with the flags below, you must power-cycle both arms before enabling.
+PiPER calibration is required by default.
+If needed, you can disable it with
+`--robot.calibration_mode=off` and `--teleop.calibration_mode=off`.
+
+If you switch master/follower roles with the flags below, you must power-cycle both arms before enabling.
 
 ```bash
 --teleop.set_leader_mode_on_connect=true

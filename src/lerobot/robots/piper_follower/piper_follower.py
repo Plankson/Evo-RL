@@ -30,6 +30,7 @@ from lerobot.utils.piper_sdk import (
     get_piper_sdk,
     milli_to_unit,
     parse_piper_log_level,
+    should_require_piper_calibration,
     unit_to_milli,
 )
 from lerobot.utils.utils import enter_pressed, move_cursor_up
@@ -100,7 +101,7 @@ class PiperFollower(Robot):
             should_enable = self.config.enable_on_connect and calibrate
             if should_enable and not self._wait_enable(self.config.enable_timeout_s):
                 logger.warning("Piper follower did not report enabled state before timeout.")
-            if not self.is_calibrated and calibrate:
+            if not self.is_calibrated and calibrate and should_require_piper_calibration(self.config.calibration_mode):
                 logger.info("No piper-follower calibration file found for '%s'. Running lerobot-calibrate flow.", self.id)
                 self.calibrate()
 
@@ -115,6 +116,9 @@ class PiperFollower(Robot):
             raise
 
         logger.info("%s connected.", self)
+
+    def _use_uncalibrated_passthrough(self) -> bool:
+        return not self.is_calibrated and not should_require_piper_calibration(self.config.calibration_mode)
 
     @property
     def is_calibrated(self) -> bool:
@@ -247,7 +251,7 @@ class PiperFollower(Robot):
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        if not self.is_calibrated:
+        if not self.is_calibrated and not self._use_uncalibrated_passthrough():
             raise RuntimeError(
                 f"{self} is not calibrated. Run `lerobot-calibrate --robot.type=piper_follower --robot.id={self.id}` first."
             )
@@ -259,7 +263,10 @@ class PiperFollower(Robot):
         joint_keys = PIPER_JOINT_ACTION_KEYS
         has_all_joints = all(key in action for key in joint_keys)
         if has_all_joints:
-            joint_targets = [self._offset_to_target(key, action[key]) for key in joint_keys]
+            if self._use_uncalibrated_passthrough():
+                joint_targets = [action[key] for key in joint_keys]
+            else:
+                joint_targets = [self._offset_to_target(key, action[key]) for key in joint_keys]
             joint_commands = [unit_to_milli(value) for value in joint_targets]
             self.arm.JointCtrl(*joint_commands)
             sent_action.update({key: milli_to_unit(raw) for key, raw in zip(joint_keys, joint_commands, strict=True)})
@@ -267,7 +274,10 @@ class PiperFollower(Robot):
             logger.debug("Ignoring partial Piper joint action. Need all six joint keys to send command.")
 
         if self.config.sync_gripper and "gripper.pos" in action:
-            gripper_target = self._offset_to_target("gripper.pos", action["gripper.pos"])
+            if self._use_uncalibrated_passthrough():
+                gripper_target = action["gripper.pos"]
+            else:
+                gripper_target = self._offset_to_target("gripper.pos", action["gripper.pos"])
             gripper_pos_raw = unit_to_milli(gripper_target)
             self.arm.GripperCtrl(
                 gripper_pos_raw,

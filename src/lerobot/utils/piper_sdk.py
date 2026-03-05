@@ -29,6 +29,7 @@ PIPER_JOINT_NAMES = (
 )
 PIPER_JOINT_ACTION_KEYS = tuple(f"{joint}.pos" for joint in PIPER_JOINT_NAMES)
 PIPER_ACTION_KEYS = PIPER_JOINT_ACTION_KEYS + ("gripper.pos",)
+PIPER_CALIBRATION_MODES = {"required", "off"}
 
 
 def milli_to_unit(value: float | int) -> float:
@@ -61,3 +62,14 @@ def parse_piper_log_level(level_name: str) -> Any:
             f"Invalid Piper log level '{level_name}'. "
             "Expected one of: DEBUG, INFO, WARNING, ERROR, CRITICAL, SILENT."
         ) from exc
+
+
+def should_require_piper_calibration(calibration_mode: str) -> bool:
+    if calibration_mode == "required":
+        return True
+    if calibration_mode == "off":
+        return False
+    raise ValueError(
+        f"Invalid Piper calibration mode '{calibration_mode}'. "
+        "Expected one of: required, off."
+    )

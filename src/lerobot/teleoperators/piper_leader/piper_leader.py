@@ -29,6 +29,7 @@ from lerobot.utils.piper_sdk import (
     get_piper_sdk,
     milli_to_unit,
     parse_piper_log_level,
+    should_require_piper_calibration,
     unit_to_milli,
 )
 from lerobot.utils.utils import enter_pressed, move_cursor_up
@@ -93,7 +94,7 @@ class PiperLeader(Teleoperator):
                 self.arm.MasterSlaveConfig(0xFC, 0x00, 0x00, 0x00)
                 time.sleep(0.05)
             self.configure()
-            if not self.is_calibrated and calibrate:
+            if not self.is_calibrated and calibrate and should_require_piper_calibration(self.config.calibration_mode):
                 logger.info("No piper-leader calibration file found for '%s'. Running lerobot-calibrate flow.", self.id)
                 self.calibrate()
         except Exception:
@@ -102,6 +103,9 @@ class PiperLeader(Teleoperator):
             raise
 
         logger.info("%s connected.", self)
+
+    def _use_uncalibrated_passthrough(self) -> bool:
+        return not self.is_calibrated and not should_require_piper_calibration(self.config.calibration_mode)
 
     @property
     def is_calibrated(self) -> bool:
@@ -285,12 +289,18 @@ class PiperLeader(Teleoperator):
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
-        if not self.is_calibrated:
+        if not self.is_calibrated and not self._use_uncalibrated_passthrough():
             raise RuntimeError(
                 f"{self} is not calibrated. Run `lerobot-calibrate --teleop.type=piper_leader --teleop.id={self.id}` first."
             )
 
         raw_action = self._read_raw_action()
+        if self._use_uncalibrated_passthrough():
+            action: RobotAction = dict(raw_action)
+            if not self.config.sync_gripper:
+                action["gripper.pos"] = 0.0
+            return action
+
         action: RobotAction = {
             key: self._calibrated_to_offset(key, raw_action[key]) for key in PIPER_CALIB_KEYS
         }
@@ -300,7 +310,7 @@ class PiperLeader(Teleoperator):
 
     @check_if_not_connected
     def send_feedback(self, feedback: dict[str, Any]) -> None:
-        if not self.is_calibrated:
+        if not self.is_calibrated and not self._use_uncalibrated_passthrough():
             raise RuntimeError(
                 f"{self} is not calibrated. Run `lerobot-calibrate --teleop.type=piper_leader --teleop.id={self.id}` first."
             )
@@ -311,12 +321,18 @@ class PiperLeader(Teleoperator):
         joint_keys = PIPER_JOINT_ACTION_KEYS
         has_all_joints = all(key in feedback for key in joint_keys)
         if has_all_joints:
-            joint_targets = [self._offset_to_calibrated(key, feedback[key]) for key in joint_keys]
+            if self._use_uncalibrated_passthrough():
+                joint_targets = [feedback[key] for key in joint_keys]
+            else:
+                joint_targets = [self._offset_to_calibrated(key, feedback[key]) for key in joint_keys]
             joint_commands = [unit_to_milli(value) for value in joint_targets]
             self.arm.JointCtrl(*joint_commands)
 
         if self.config.sync_gripper and "gripper.pos" in feedback:
-            gripper_target = self._offset_to_calibrated("gripper.pos", feedback["gripper.pos"])
+            if self._use_uncalibrated_passthrough():
+                gripper_target = feedback["gripper.pos"]
+            else:
+                gripper_target = self._offset_to_calibrated("gripper.pos", feedback["gripper.pos"])
             gripper_pos_raw = unit_to_milli(gripper_target)
             self.arm.GripperCtrl(
                 gripper_pos_raw,

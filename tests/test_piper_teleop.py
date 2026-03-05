@@ -268,3 +268,21 @@ def test_piper_follower_connect_rolls_back_connected_cameras(monkeypatch):
     assert cam_ok.disconnect_calls == 1
     assert not cam_ok.is_connected
     assert not robot.is_connected
+
+
+def test_piper_calibration_mode_off_allows_uncalibrated_control(monkeypatch):
+    patch_fake_sdk(monkeypatch)
+
+    teleop = PiperLeader(PiperLeaderConfig(port="can1", calibration_mode="off"))
+    robot = PiperFollower(PiperFollowerConfig(port="can0", calibration_mode="off"))
+
+    teleop.connect(calibrate=False)
+    robot.connect(calibrate=False)
+    try:
+        action = teleop.get_action()
+        sent = robot.send_action(action)
+        assert sent["joint_1.pos"] == 10.0
+        assert sent["gripper.pos"] == 42.0
+    finally:
+        teleop.disconnect()
+        robot.disconnect()
