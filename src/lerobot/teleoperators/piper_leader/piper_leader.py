@@ -79,7 +79,12 @@ class PiperLeader(Teleoperator):
         self._is_connected = True
         try:
             if self.config.set_leader_mode_on_connect:
-                self.arm.MasterSlaveConfig(0xFA, 0x00, 0x00, 0x00)
+                # NOTE:
+                # - Piper teaching-input mode (0xFA) does not accept external JointCtrl/GripperCtrl commands.
+                # - For policy-sync and human-in-the-loop switching, the leader must remain commandable,
+                #   so we configure it as motion-output mode (0xFC), same as the follower side.
+                # - Mode-role changes (e.g., 0xFA <-> 0xFC) may require a full power-cycle to take effect.
+                self.arm.MasterSlaveConfig(0xFC, 0x00, 0x00, 0x00)
                 time.sleep(0.05)
             self.configure()
         except Exception:

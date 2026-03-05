@@ -32,7 +32,7 @@ class PiperLeaderConfigBase:
     log_level: str = "WARNING"
     startup_sleep_s: float = 0.1
 
-    # Optional role command on startup (0xFA = teaching input arm)
+    # Optional role command on startup (0xFC = motion output arm)
     set_leader_mode_on_connect: bool = False
 
     # Manual backdrivable mode for human teleop

@@ -268,6 +268,14 @@ Recommendation: use **`fourcc: "MJPG"`** for OpenCV and **`warmup_s`** for RealS
 
 #### AgileX PiPER
 
+PiPER mode note (policy-sync / human-in-the-loop):
+
+- Leader/follower linkage is configured via `MasterSlaveConfig(linkage_config, feedback_offset, ctrl_offset, linkage_offset)`.
+- `linkage_config=0xFA`: teaching-input arm.
+- `linkage_config=0xFC`: motion-output arm.
+- `0xFA` is not suitable when the arm must accept external control commands. For policy execution + intervention switching, keep both teleop and robot arms in `0xFC`.
+- After switching role mode (`0xFA` <-> `0xFC`), perform a full power-cycle before validation.
+
 ```bash
 lerobot-human-inloop-record \
   --robot.type=piper_follower \
