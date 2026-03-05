@@ -463,7 +463,7 @@ Iterative training loop (abstract):
 - WeChat group QR code:
 
 <p align="center">
-  <img alt="EvoMind WeChat QR" src="./website/assets/images/evomind_wechat.jpg" width="220"/>
+  <img alt="EvoMind WeChat QR" src="./website/assets/images/rlgroup.jpg" width="220"/>
 </p>
 
 ## Affiliations
