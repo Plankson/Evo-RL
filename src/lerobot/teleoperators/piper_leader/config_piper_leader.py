@@ -16,8 +16,6 @@
 
 from dataclasses import dataclass
 
-
-
 from ..config import TeleoperatorConfig
 
 
@@ -33,9 +31,6 @@ class PiperLeaderConfigBase:
     can_auto_init: bool = True
     log_level: str = "WARNING"
     startup_sleep_s: float = 0.1
-
-    # Optional role command on startup (0xFC = motion output arm)
-    set_leader_mode_on_connect: bool = False
 
     # Manual backdrivable mode for human teleop
     manual_control: bool = True
@@ -55,6 +50,14 @@ class PiperLeaderConfigBase:
     mode_refresh_interval_s: float = 1.0
     enable_timeout_s: float = 3.0
 
+    # Gravity compensation settings (used when manual_control=true)
+    gravity_comp_control_hz: float = 200.0
+    gravity_comp_tx_ratio: tuple[float, float, float, float, float, float] = (1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
+    gravity_comp_torque_limit: float = 8.0
+    gravity_comp_mit_kp: float = 0.0
+    gravity_comp_mit_kd: float = 0.0
+    gravity_comp_base_rpy_deg: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
     # Calibration precision:
     # homing_offset/range_min/range_max are stored as "degree * calibration_scale".
     calibration_scale: int = 1000
@@ -65,23 +68,42 @@ class PiperLeaderConfigBase:
     disable_on_disconnect: bool = False
 
 
+def _validate_piper_leader_config(config: PiperLeaderConfigBase) -> None:
+    if not (0 <= config.command_speed_ratio <= 100):
+        raise ValueError("`command_speed_ratio` must be between 0 and 100.")
+    if config.mode_refresh_interval_s < 0:
+        raise ValueError("`mode_refresh_interval_s` must be >= 0.")
+    if config.enable_timeout_s < 0:
+        raise ValueError("`enable_timeout_s` must be >= 0.")
+    if config.gravity_comp_control_hz <= 0:
+        raise ValueError("`gravity_comp_control_hz` must be > 0.")
+    if len(config.gravity_comp_tx_ratio) != 6:
+        raise ValueError("`gravity_comp_tx_ratio` must contain exactly 6 values.")
+    if config.gravity_comp_torque_limit <= 0:
+        raise ValueError("`gravity_comp_torque_limit` must be > 0.")
+    if len(config.gravity_comp_base_rpy_deg) != 3:
+        raise ValueError("`gravity_comp_base_rpy_deg` must contain exactly 3 values.")
+    if config.calibration_scale <= 0:
+        raise ValueError("`calibration_scale` must be > 0.")
+    if not isinstance(config.require_calibration, bool):
+        raise ValueError("require_calibration must be true or false.")
+    if config.startup_sleep_s < 0:
+        raise ValueError("`startup_sleep_s` must be >= 0.")
+    if not (0 <= config.gripper_effort_default <= 5000):
+        raise ValueError("`gripper_effort_default` must be between 0 and 5000.")
+    if config.gripper_status_code not in {0x00, 0x01, 0x02, 0x03}:
+        raise ValueError("`gripper_status_code` must be one of 0x00, 0x01, 0x02, 0x03.")
+
+
 @TeleoperatorConfig.register_subclass("piper_leader")
 @dataclass
 class PiperLeaderConfig(TeleoperatorConfig, PiperLeaderConfigBase):
     def __post_init__(self):
-        if not (0 <= self.command_speed_ratio <= 100):
-            raise ValueError("`command_speed_ratio` must be between 0 and 100.")
-        if self.mode_refresh_interval_s < 0:
-            raise ValueError("`mode_refresh_interval_s` must be >= 0.")
-        if self.enable_timeout_s < 0:
-            raise ValueError("`enable_timeout_s` must be >= 0.")
-        if self.calibration_scale <= 0:
-            raise ValueError("`calibration_scale` must be > 0.")
-        if not isinstance(self.require_calibration, bool):
-            raise ValueError("require_calibration must be true or false.")
-        if self.startup_sleep_s < 0:
-            raise ValueError("`startup_sleep_s` must be >= 0.")
-        if not (0 <= self.gripper_effort_default <= 5000):
-            raise ValueError("`gripper_effort_default` must be between 0 and 5000.")
-        if self.gripper_status_code not in {0x00, 0x01, 0x02, 0x03}:
-            raise ValueError("`gripper_status_code` must be one of 0x00, 0x01, 0x02, 0x03.")
+        _validate_piper_leader_config(self)
+
+
+@TeleoperatorConfig.register_subclass("piperx_leader")
+@dataclass
+class PiperXLeaderConfig(TeleoperatorConfig, PiperLeaderConfigBase):
+    def __post_init__(self):
+        _validate_piper_leader_config(self)

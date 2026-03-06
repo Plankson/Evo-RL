@@ -95,6 +95,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
         from .piper_leader import PiperLeader
 
         return PiperLeader(config)
+    elif config.type == "piperx_leader":
+        from .piper_leader import PiperXLeader
+
+        return PiperXLeader(config)
     elif config.type == "bi_openarm_leader":
         from .bi_openarm_leader import BiOpenArmLeader
 
