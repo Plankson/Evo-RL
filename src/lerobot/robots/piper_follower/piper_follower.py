@@ -24,17 +24,19 @@ from lerobot.processor import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.piper_sdk import (
     PIPER_ACTION_KEYS,
+    guard_piper_ctrl_mode_on_connect,
     PIPER_JOINT_ACTION_KEYS,
     PIPER_JOINT_NAMES,
     get_piper_sdk,
     milli_to_unit,
     parse_piper_log_level,
     unit_to_milli,
+    wait_enable_piper,
 )
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
 from ..robot import Robot
-from .config_piper_follower import PiperFollowerConfig
+from .config_piper_follower import PiperFollowerConfig, PiperXFollowerConfig
 
 logger = logging.getLogger(__name__)
 PIPER_CALIB_KEYS = list(PIPER_ACTION_KEYS)
@@ -47,7 +49,7 @@ class PiperFollower(Robot):
     config_class = PiperFollowerConfig
     name = "piper_follower"
 
-    def __init__(self, config: PiperFollowerConfig):
+    def __init__(self, config: PiperFollowerConfig | PiperXFollowerConfig):
         super().__init__(config)
         self.config = config
         self._is_connected = False
@@ -85,14 +87,11 @@ class PiperFollower(Robot):
         self.arm.ConnectPort()
         if self.config.startup_sleep_s > 0:
             time.sleep(self.config.startup_sleep_s)
+        guard_piper_ctrl_mode_on_connect(arm=self.arm, interface_name=self.config.port)
 
         self._is_connected = True
         connected_cameras = []
         try:
-            if self.config.set_follower_mode_on_connect:
-                self.arm.MasterSlaveConfig(0xFC, 0x00, 0x00, 0x00)
-                time.sleep(0.05)
-
             self.configure()
             should_auto_calibrate = (
                 not self.is_calibrated
@@ -190,12 +189,7 @@ class PiperFollower(Robot):
             self._send_motion_mode()
 
     def _wait_enable(self, timeout_s: float) -> bool:
-        deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
-            if bool(self.arm.EnablePiper()):
-                return True
-            time.sleep(0.02)
-        return False
+        return wait_enable_piper(self.arm, timeout_s)
 
     def _read_raw_observation(self) -> RobotObservation:
         joint_msg = self.arm.GetArmJointMsgs()
@@ -259,7 +253,7 @@ class PiperFollower(Robot):
     def send_action(self, action: RobotAction) -> RobotAction:
         if not self.is_calibrated and not self._use_uncalibrated_passthrough():
             raise RuntimeError(
-                f"{self} is not calibrated. Run `lerobot-calibrate --robot.type=piper_follower --robot.id={self.id}` first."
+                f"{self} is not calibrated. Run `lerobot-calibrate --robot.type={self.config.type} --robot.id={self.id}` first."
             )
 
         self._refresh_motion_mode_if_needed()
@@ -308,3 +302,8 @@ class PiperFollower(Robot):
                 cam.disconnect()
             self._is_connected = False
             logger.info("%s disconnected.", self)
+
+
+class PiperXFollower(PiperFollower):
+    config_class = PiperXFollowerConfig
+    name = "piperx_follower"

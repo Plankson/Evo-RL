@@ -14,5 +14,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_piper_leader import PiperLeaderConfig, PiperLeaderConfigBase
-from .piper_leader import PiperLeader
+from .config_piper_leader import PiperLeaderConfig, PiperLeaderConfigBase, PiperXLeaderConfig
+from .piper_leader import PiperLeader, PiperXLeader

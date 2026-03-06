@@ -204,6 +204,13 @@ If needed, you can also use temporary device paths (for example `/dev/ttyACM*` a
 
 #### AgileX PiPER
 
+For PiPER-series robots, make sure Git LFS assets are pulled before running teleoperation:
+
+```bash
+git lfs pull --include="src/lerobot/assets/piper_description/**,src/lerobot/assets/piper_x_description/**" --exclude="*"
+git lfs checkout src/lerobot/assets/piper_description src/lerobot/assets/piper_x_description
+```
+
 For PiPER setup, PiPER uses CAN interfaces instead of serial ports.
 So first run `lerobot-setup-can` to confirm CAN interfaces are available:
 
@@ -211,35 +218,18 @@ So first run `lerobot-setup-can` to confirm CAN interfaces are available:
 lerobot-setup-can --mode=setup --interfaces=can0,can1
 ```
 
-PiPER calibration is required by default.
-If needed, you can disable it with
-`--robot.require_calibration=false` and `--teleop.require_calibration=false`.
-
-If you switch master/follower roles with the flags below, you must power-cycle both arms before enabling.
-
-```bash
---teleop.set_leader_mode_on_connect=true
---robot.set_follower_mode_on_connect=true
-```
-
 For single-arm users, run the command below to verify the system is ready:
 
 ```bash
 lerobot-teleoperate \
-  --robot.type=piper_follower \
+  --robot.type=piperx_follower \
   --robot.port=can0 \
-  --robot.id=my_piper_follower \
-  --teleop.type=piper_leader \
+  --robot.id=my_piperx_follower \
+  --robot.require_calibration=false \
+  --teleop.type=piperx_leader \
   --teleop.port=can1 \
-  --teleop.id=my_piper_leader
-```
-
-Optional PiPER flags:
-
-```bash
---robot.sync_gripper=true|false
---robot.gripper_effort_default=1000
---teleop.sync_gripper=true|false
+  --teleop.id=my_piperx_leader \
+  --teleop.require_calibration=false
 ```
 
 <a id="data-collection"></a>
@@ -290,9 +280,11 @@ lerobot-human-inloop-record \
   --robot.type=piper_follower \
   --robot.port=can0 \
   --robot.id=my_piper_follower \
+  --robot.require_calibration=false \
   --teleop.type=piper_leader \
   --teleop.port=can1 \
   --teleop.id=my_piper_leader \
+  --teleop.require_calibration=false \
   --dataset.repo_id=<HF_USERNAME_OR_ORG>/<DATASET_NAME> \
   --dataset.single_task="<YOUR_TASK_DESCRIPTION>" \
   --dataset.num_episodes=<NUM_EPISODES> \

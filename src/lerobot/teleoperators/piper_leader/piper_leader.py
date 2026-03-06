@@ -17,6 +17,7 @@
 import logging
 import time
 from functools import cached_property
+from importlib import resources
 from typing import Any
 
 from lerobot.motors import MotorCalibration
@@ -24,21 +25,26 @@ from lerobot.processor import RobotAction
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.piper_sdk import (
     PIPER_ACTION_KEYS,
+    guard_piper_ctrl_mode_on_connect,
     PIPER_JOINT_ACTION_KEYS,
     PIPER_JOINT_NAMES,
     get_piper_sdk,
     milli_to_unit,
     parse_piper_log_level,
     unit_to_milli,
+    wait_enable_piper,
 )
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
 from ..teleoperator import Teleoperator
-from .config_piper_leader import PiperLeaderConfig
+from .config_piper_leader import PiperLeaderConfig, PiperXLeaderConfig
+from .gravity_compensation import PiperGravityCompensationLoop
 
 logger = logging.getLogger(__name__)
 PIPER_CALIB_KEYS = list(PIPER_ACTION_KEYS)
 PIPER_CALIB_IDS = {key: idx for idx, key in enumerate(PIPER_CALIB_KEYS)}
+DEFAULT_PIPER_GRAVITY_URDF = "assets/piper_description/urdf/piper_no_gripper_description.urdf"
+DEFAULT_PIPERX_GRAVITY_URDF = "assets/piper_x_description/urdf/piper_x_description_no_gripper.urdf"
 
 
 class PiperLeader(Teleoperator):
@@ -46,13 +52,15 @@ class PiperLeader(Teleoperator):
 
     config_class = PiperLeaderConfig
     name = "piper_leader"
+    gravity_comp_urdf_relpath = DEFAULT_PIPER_GRAVITY_URDF
 
-    def __init__(self, config: PiperLeaderConfig):
+    def __init__(self, config: PiperLeaderConfig | PiperXLeaderConfig):
         super().__init__(config)
         self.config = config
         self._is_connected = False
         self._manual_control_enabled: bool | None = None
         self._last_mode_refresh_t = 0.0
+        self._gravity_comp_loop: PiperGravityCompensationLoop | None = None
 
         interface_cls, _ = get_piper_sdk()
         self.arm = interface_cls(
@@ -79,19 +87,12 @@ class PiperLeader(Teleoperator):
         self.arm.ConnectPort()
         if self.config.startup_sleep_s > 0:
             time.sleep(self.config.startup_sleep_s)
+        guard_piper_ctrl_mode_on_connect(arm=self.arm, interface_name=self.config.port)
 
         self._is_connected = True
         # Recompute control mode on every fresh connection.
         self._manual_control_enabled = None
         try:
-            if self.config.set_leader_mode_on_connect:
-                # NOTE:
-                # - Piper teaching-input mode (0xFA) does not accept external JointCtrl/GripperCtrl commands.
-                # - For policy-sync and human-in-the-loop switching, the leader must remain commandable,
-                #   so we configure it as motion-output mode (0xFC), same as the follower side.
-                # - Mode-role changes (e.g., 0xFA <-> 0xFC) may require a full power-cycle to take effect.
-                self.arm.MasterSlaveConfig(0xFC, 0x00, 0x00, 0x00)
-                time.sleep(0.05)
             self.configure()
             if (
                 not self.is_calibrated
@@ -171,25 +172,73 @@ class PiperLeader(Teleoperator):
             self._send_command_mode()
 
     def _wait_enable(self, timeout_s: float) -> bool:
-        deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
-            if bool(self.arm.EnablePiper()):
-                return True
-            time.sleep(0.02)
-        return False
+        return wait_enable_piper(self.arm, timeout_s)
+
+    def _send_gripper_ctrl(self, gripper_pos_raw: int, enabled: bool) -> None:
+        self.arm.GripperCtrl(
+            gripper_pos_raw,
+            self.config.gripper_effort_default if enabled else 0,
+            self.config.gripper_status_code if enabled else 0x00,
+            0x00,
+        )
+
+    def _set_gripper_enabled(self, enabled: bool) -> None:
+        gripper_pos_raw = 0
+        try:
+            gripper_msg = self.arm.GetArmGripperMsgs()
+            gripper_state = getattr(gripper_msg, "gripper_state", None)
+            if gripper_state is not None:
+                gripper_pos_raw = abs(int(getattr(gripper_state, "grippers_angle", 0)))
+        except Exception:
+            logger.debug("Could not read current gripper angle before setting enable=%s.", enabled)
+        self._send_gripper_ctrl(gripper_pos_raw, enabled)
 
     def set_manual_control(self, enabled: bool) -> None:
         if not self._is_connected:
             return
         if enabled and self._manual_control_enabled is not True:
-            self.arm.DisableArm(7)
+            if not self._wait_enable(self.config.enable_timeout_s):
+                logger.warning("Piper leader did not report enabled state before entering gravity compensation.")
+            if self.config.sync_gripper:
+                self._set_gripper_enabled(False)
+            self._ensure_gravity_comp_loop().start()
             self._manual_control_enabled = True
             return
         if not enabled and self._manual_control_enabled is not False:
+            self._stop_gravity_comp_loop_if_needed()
             self._send_command_mode()
             if not self._wait_enable(self.config.enable_timeout_s):
                 logger.warning("Piper leader did not report enabled state before timeout.")
+            if self.config.sync_gripper:
+                self._set_gripper_enabled(True)
             self._manual_control_enabled = False
+
+    def _ensure_gravity_comp_loop(self) -> PiperGravityCompensationLoop:
+        default_urdf = resources.files("lerobot").joinpath(self.gravity_comp_urdf_relpath)
+        if not default_urdf.is_file():
+            raise FileNotFoundError(
+                "Bundled gravity compensation URDF is missing: "
+                f"{self.gravity_comp_urdf_relpath}. Reinstall the package."
+            )
+        urdf_path = str(default_urdf)
+        if self._gravity_comp_loop is None:
+            self._gravity_comp_loop = PiperGravityCompensationLoop(
+                arm=self.arm,
+                urdf_path=urdf_path,
+                control_hz=self.config.gravity_comp_control_hz,
+                tx_ratio=self.config.gravity_comp_tx_ratio,
+                torque_limit=self.config.gravity_comp_torque_limit,
+                mit_kp=self.config.gravity_comp_mit_kp,
+                mit_kd=self.config.gravity_comp_mit_kd,
+                base_rpy_deg=self.config.gravity_comp_base_rpy_deg,
+                mode_refresh_interval_s=self.config.mode_refresh_interval_s,
+                move_speed_ratio=self.config.command_speed_ratio,
+            )
+        return self._gravity_comp_loop
+
+    def _stop_gravity_comp_loop_if_needed(self) -> None:
+        if self._gravity_comp_loop is not None:
+            self._gravity_comp_loop.stop()
 
     def configure(self) -> None:
         self.set_manual_control(self.config.manual_control)
@@ -297,7 +346,7 @@ class PiperLeader(Teleoperator):
     def get_action(self) -> RobotAction:
         if not self.is_calibrated and not self._use_uncalibrated_passthrough():
             raise RuntimeError(
-                f"{self} is not calibrated. Run `lerobot-calibrate --teleop.type=piper_leader --teleop.id={self.id}` first."
+                f"{self} is not calibrated. Run `lerobot-calibrate --teleop.type={self.config.type} --teleop.id={self.id}` first."
             )
 
         raw_action = self._read_raw_action()
@@ -318,7 +367,7 @@ class PiperLeader(Teleoperator):
     def send_feedback(self, feedback: dict[str, Any]) -> None:
         if not self.is_calibrated and not self._use_uncalibrated_passthrough():
             raise RuntimeError(
-                f"{self} is not calibrated. Run `lerobot-calibrate --teleop.type=piper_leader --teleop.id={self.id}` first."
+                f"{self} is not calibrated. Run `lerobot-calibrate --teleop.type={self.config.type} --teleop.id={self.id}` first."
             )
 
         self.set_manual_control(False)
@@ -340,16 +389,12 @@ class PiperLeader(Teleoperator):
             else:
                 gripper_target = self._offset_to_calibrated("gripper.pos", feedback["gripper.pos"])
             gripper_pos_raw = unit_to_milli(gripper_target)
-            self.arm.GripperCtrl(
-                gripper_pos_raw,
-                self.config.gripper_effort_default,
-                self.config.gripper_status_code,
-                0x00,
-            )
+            self._send_gripper_ctrl(gripper_pos_raw, enabled=True)
 
     @check_if_not_connected
     def disconnect(self) -> None:
         try:
+            self._stop_gravity_comp_loop_if_needed()
             if self.config.disable_on_disconnect:
                 self.arm.DisableArm(7)
         finally:
@@ -357,3 +402,9 @@ class PiperLeader(Teleoperator):
             self._is_connected = False
             self._manual_control_enabled = None
             logger.info("%s disconnected.", self)
+
+
+class PiperXLeader(PiperLeader):
+    config_class = PiperXLeaderConfig
+    name = "piperx_leader"
+    gravity_comp_urdf_relpath = DEFAULT_PIPERX_GRAVITY_URDF

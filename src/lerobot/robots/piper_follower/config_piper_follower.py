@@ -35,9 +35,6 @@ class PiperFollowerConfigBase:
     log_level: str = "WARNING"
     startup_sleep_s: float = 0.1
 
-    # Optional role command on startup (0xFC = motion output/follower arm)
-    set_follower_mode_on_connect: bool = False
-
     # Motion mode for follower arm
     speed_ratio: int = 100
     high_follow: bool = True
@@ -65,24 +62,36 @@ class PiperFollowerConfigBase:
     disable_on_disconnect: bool = False
 
 
+def _validate_piper_follower_config(config: PiperFollowerConfigBase) -> None:
+    if not (0 <= config.speed_ratio <= 100):
+        raise ValueError("`speed_ratio` must be between 0 and 100.")
+    if config.mode_refresh_interval_s < 0:
+        raise ValueError("`mode_refresh_interval_s` must be >= 0.")
+    if config.enable_timeout_s < 0:
+        raise ValueError("`enable_timeout_s` must be >= 0.")
+    if config.calibration_scale <= 0:
+        raise ValueError("`calibration_scale` must be > 0.")
+    if not isinstance(config.require_calibration, bool):
+        raise ValueError("require_calibration must be true or false.")
+    if config.startup_sleep_s < 0:
+        raise ValueError("`startup_sleep_s` must be >= 0.")
+    if not (0 <= config.gripper_effort_default <= 5000):
+        raise ValueError("`gripper_effort_default` must be between 0 and 5000.")
+    if config.gripper_status_code not in {0x00, 0x01, 0x02, 0x03}:
+        raise ValueError("`gripper_status_code` must be one of 0x00, 0x01, 0x02, 0x03.")
+
+
 @RobotConfig.register_subclass("piper_follower")
 @dataclass
 class PiperFollowerConfig(RobotConfig, PiperFollowerConfigBase):
     def __post_init__(self):
         super().__post_init__()
-        if not (0 <= self.speed_ratio <= 100):
-            raise ValueError("`speed_ratio` must be between 0 and 100.")
-        if self.mode_refresh_interval_s < 0:
-            raise ValueError("`mode_refresh_interval_s` must be >= 0.")
-        if self.enable_timeout_s < 0:
-            raise ValueError("`enable_timeout_s` must be >= 0.")
-        if self.calibration_scale <= 0:
-            raise ValueError("`calibration_scale` must be > 0.")
-        if not isinstance(self.require_calibration, bool):
-            raise ValueError("require_calibration must be true or false.")
-        if self.startup_sleep_s < 0:
-            raise ValueError("`startup_sleep_s` must be >= 0.")
-        if not (0 <= self.gripper_effort_default <= 5000):
-            raise ValueError("`gripper_effort_default` must be between 0 and 5000.")
-        if self.gripper_status_code not in {0x00, 0x01, 0x02, 0x03}:
-            raise ValueError("`gripper_status_code` must be one of 0x00, 0x01, 0x02, 0x03.")
+        _validate_piper_follower_config(self)
+
+
+@RobotConfig.register_subclass("piperx_follower")
+@dataclass
+class PiperXFollowerConfig(RobotConfig, PiperFollowerConfigBase):
+    def __post_init__(self):
+        super().__post_init__()
+        _validate_piper_follower_config(self)
