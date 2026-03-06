@@ -177,78 +177,31 @@ def wait_until(predicate, timeout_s: float = 0.2, poll_s: float = 0.005) -> bool
     return False
 
 
-def test_piper_leader_follower_teleop_roundtrip(monkeypatch):
+@pytest.mark.parametrize(
+    ("teleop_cfg", "robot_cfg", "teleop_cls", "robot_cls"),
+    [
+        (
+            PiperLeaderConfig(port="can1", manual_control=False, sync_gripper=True),
+            PiperFollowerConfig(port="can0", sync_gripper=True),
+            PiperLeader,
+            PiperFollower,
+        ),
+        (
+            PiperXLeaderConfig(port="can1", manual_control=False, sync_gripper=True),
+            PiperXFollowerConfig(port="can0", sync_gripper=True),
+            PiperXLeader,
+            PiperXFollower,
+        ),
+    ],
+)
+def test_piper_leader_follower_teleop_roundtrip(monkeypatch, teleop_cfg, robot_cfg, teleop_cls, robot_cls):
     patch_fake_sdk(monkeypatch)
-
-    teleop_cfg = PiperLeaderConfig(
-        port="can1",
-        manual_control=False,
-        sync_gripper=True,
-    )
-    robot_cfg = PiperFollowerConfig(
-        port="can0",
-        sync_gripper=True,
-    )
 
     teleop = make_teleoperator_from_config(teleop_cfg)
     robot = make_robot_from_config(robot_cfg)
 
-    assert isinstance(teleop, PiperLeader)
-    assert isinstance(robot, PiperFollower)
-
-    teleop.calibration = make_identity_calibration()
-    robot.calibration = make_identity_calibration()
-
-    teleop.connect(calibrate=False)
-    robot.connect(calibrate=False)
-    try:
-        action = teleop.get_action()
-        sent = robot.send_action(action)
-        obs = robot.get_observation()
-
-        assert robot.arm.last_joint == (10000, 20000, 30000, 40000, 50000, 60000)
-        assert robot.arm.last_gripper == (
-            42000,
-            robot_cfg.gripper_effort_default,
-            robot_cfg.gripper_status_code,
-            0x00,
-        )
-        assert sent["joint_1.pos"] == 10.0
-        assert sent["gripper.pos"] == 42.0
-        assert obs["joint_1.pos"] == 11.0
-        assert obs["gripper.pos"] == 43.0
-
-        teleop.send_feedback(action)
-        assert teleop.arm.last_joint == (10000, 20000, 30000, 40000, 50000, 60000)
-        assert teleop.arm.last_gripper == (
-            42000,
-            teleop_cfg.gripper_effort_default,
-            teleop_cfg.gripper_status_code,
-            0x00,
-        )
-    finally:
-        teleop.disconnect()
-        robot.disconnect()
-
-
-def test_piperx_leader_follower_teleop_roundtrip(monkeypatch):
-    patch_fake_sdk(monkeypatch)
-
-    teleop_cfg = PiperXLeaderConfig(
-        port="can1",
-        manual_control=False,
-        sync_gripper=True,
-    )
-    robot_cfg = PiperXFollowerConfig(
-        port="can0",
-        sync_gripper=True,
-    )
-
-    teleop = make_teleoperator_from_config(teleop_cfg)
-    robot = make_robot_from_config(robot_cfg)
-
-    assert isinstance(teleop, PiperXLeader)
-    assert isinstance(robot, PiperXFollower)
+    assert isinstance(teleop, teleop_cls)
+    assert isinstance(robot, robot_cls)
 
     teleop.calibration = make_identity_calibration()
     robot.calibration = make_identity_calibration()

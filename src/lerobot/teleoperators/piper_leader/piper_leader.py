@@ -120,6 +120,7 @@ class PiperLeader(Teleoperator):
                 )
                 self.calibrate()
         except Exception:
+            self._stop_gravity_comp_loop_if_needed()
             self.arm.DisconnectPort()
             self._is_connected = False
             raise
@@ -229,15 +230,15 @@ class PiperLeader(Teleoperator):
             self._manual_control_enabled = False
 
     def _ensure_gravity_comp_loop(self) -> PiperGravityCompensationLoop:
-        default_urdf = resources.files("lerobot").joinpath(self.gravity_comp_urdf_relpath)
-        if not default_urdf.is_file():
-            raise FileNotFoundError(
-                "Bundled gravity compensation URDF is missing: "
-                f"{self.gravity_comp_urdf_relpath}. Reinstall the package."
-            )
-        _ensure_not_lfs_pointer(default_urdf, self.gravity_comp_urdf_relpath)
-        urdf_path = str(default_urdf)
         if self._gravity_comp_loop is None:
+            default_urdf = resources.files("lerobot").joinpath(self.gravity_comp_urdf_relpath)
+            if not default_urdf.is_file():
+                raise FileNotFoundError(
+                    "Bundled gravity compensation URDF is missing: "
+                    f"{self.gravity_comp_urdf_relpath}. Reinstall the package."
+                )
+            _ensure_not_lfs_pointer(default_urdf, self.gravity_comp_urdf_relpath)
+            urdf_path = str(default_urdf)
             self._gravity_comp_loop = PiperGravityCompensationLoop(
                 arm=self.arm,
                 urdf_path=urdf_path,
