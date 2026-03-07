@@ -21,13 +21,23 @@
 
 ## 🎯 Evo-RL Focus
 
-- **Open real-world RL on two platforms**: we build and release full real-world RL pipelines on SO101 and AgileX PiPER.
+- **Open real-world RL on two platforms**: we build and release full real-world RL pipelines on SO101 and AgileX (PiPER/PiPER-X).
 - **Open code, models, and datasets for reproducibility**: we continuously release runnable offline RL assets so more people can reproduce results and apply them to real-world tasks.
 - **Open algorithm and community co-evolution**: we reproduce existing real-world RL methods, propose new methods, and keep publishing data/benchmarks to grow a collaborative open-source community.
 
 ## 🚀 News
 
+- **[2026-03-07]** Added AgileX (PiPER/PiPER-X) support for real-world RL.
 - **[2026-02-26]** First SO101 real-world RL baseline and reproducible CLI workflow are released.
+
+## 🧭 Table of Contents
+
+| Getting Started                        | Training Pipeline                                                            | Project Info                                |
+| -------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------- |
+| [⚡ Quick Start](#quick-start)         | [4) Value Function Training](#value-function-training)                       | [Model & Dataset](#model--dataset)          |
+| [1) Installation](#installation)       | [5) Value Inference](#value-inference)                                       | [Community Channels](#community-channels)   |
+| [2) Hardware Setup](#hardware-setup)   | [6) Policy Training](#policy-training)                                       | [Affiliations](#affiliations)               |
+| [3) Data Collection](#data-collection) | [7) Closed-loop Rollout and Next Round](#closed-loop-rollout-and-next-round) | [Citation](#citation) / [License](#license) |
 
 <p align="center"><strong>Value Visual Results</strong></p>
 
@@ -57,9 +67,13 @@
   <img alt="Human-in-the-Loop Result 2" src="./website/assets/gifs/hitl_2.gif" width="48%"/>
 </p>
 
+<a id="quick-start"></a>
+
 ## ⚡ Quick Start
 
 **LeRobot-aligned foundation:** we use LeRobot as the base of this codebase because its inference and data-collection logic are highly aligned with real-world RL workflows.
+
+<a id="installation"></a>
 
 ### 1) Installation
 
@@ -73,13 +87,14 @@ pip install -e .
 
 For setup details and platform-specific dependencies, follow the official [LeRobot configuration guide](https://huggingface.co/docs/lerobot/installation).
 
+<a id="hardware-setup"></a>
+
 ### 2) Hardware Setup
 
-#### SO101
+#### SO Series (SO100/SO101)
 
-Due to hardware limitations, SO100 is **not supported** for real-world reinforcement learning.
-
-For SO101 setup, please follow the [official SO101 tutorial](https://wiki.seeedstudio.com/cn/lerobot_so100m/) in detail and complete all installation and configuration steps there before continuing.
+For SO-series setup, please follow the [official tutorial](https://wiki.seeedstudio.com/cn/lerobot_so100m/) in detail and complete all installation and configuration steps there before continuing.
+The examples below use **SO101** as the reference configuration.
 
 #### Device path recommendation
 
@@ -186,9 +201,69 @@ For dual-arm camera mapping, it is fine to attach `front` under either the left-
 
 If needed, you can also use temporary device paths (for example `/dev/ttyACM*` and `/dev/video*`) during initial debugging.
 
+<a id="agilex-piper-setup"></a>
+
+#### AgileX (PiPER/PiPER-X)
+
+PiPER arms in master/teaching mode cannot receive external control commands, so all arms must be configured to follower/motion-output mode (0xFC), and firmware must be version 1.8.5 or above.
+
+For PiPER-series robots, make sure Git LFS assets are pulled before running teleoperation:
+
+```bash
+git lfs pull --include="src/lerobot/assets/piper_description/**,src/lerobot/assets/piper_x_description/**" --exclude="*"
+git lfs checkout src/lerobot/assets/piper_description src/lerobot/assets/piper_x_description
+```
+
+For PiPER setup, PiPER uses CAN interfaces instead of serial ports.
+So first run `lerobot-setup-can` to confirm CAN interfaces are available:
+
+```bash
+lerobot-setup-can --mode=setup --interfaces=<LEFT_FOLLOWER_CAN_PORT>,<LEFT_LEADER_CAN_PORT>,<RIGHT_FOLLOWER_CAN_PORT>,<RIGHT_LEADER_CAN_PORT>
+```
+
+For single-arm users, run the command below to verify the system is ready:
+
+```bash
+lerobot-teleoperate \
+  --robot.type=piperx_follower \
+  --robot.port=<FOLLOWER_CAN_PORT> \
+  --robot.id=my_piperx_follower \
+  --robot.require_calibration=false \
+  --teleop.type=piperx_leader \
+  --teleop.port=<LEADER_CAN_PORT> \
+  --teleop.id=my_piperx_leader \
+  --teleop.require_calibration=false
+```
+
+For bimanual users, run this command to verify dual-arm teleoperation:
+
+```bash
+lerobot-teleoperate \
+  --robot.type=bi_piperx_follower \
+  --robot.id=my_bi_piperx_follower \
+  --robot.left_arm_config.port=<LEFT_FOLLOWER_CAN_PORT> \
+  --robot.right_arm_config.port=<RIGHT_FOLLOWER_CAN_PORT> \
+  --robot.left_arm_config.require_calibration=false \
+  --robot.right_arm_config.require_calibration=false \
+  --teleop.type=bi_piperx_leader \
+  --teleop.id=my_bi_piperx_leader \
+  --teleop.left_arm_config.port=<LEFT_LEADER_CAN_PORT> \
+  --teleop.right_arm_config.port=<RIGHT_LEADER_CAN_PORT> \
+  --teleop.left_arm_config.require_calibration=false \
+  --teleop.right_arm_config.require_calibration=false
+```
+
+For PiPER (non-X), replace `bi_piperx_follower`/`bi_piperx_leader` with `bi_piper_follower`/`bi_piper_leader`.
+
+<a id="data-collection"></a>
+
 ### 3) Data Collection
 
-Collect rollout data with `lerobot-human-inloop-record`. Bimanual template:
+Collect rollout data with `lerobot-human-inloop-record`.
+
+#### SO Series (SO100/SO101)
+
+Bimanual template:
 
 ```bash
 lerobot-human-inloop-record \
@@ -213,6 +288,33 @@ lerobot-human-inloop-record \
 
 Recommendation: use **`fourcc: "MJPG"`** for OpenCV and **`warmup_s`** for RealSense. In this example `front` uses RealSense, but you can switch it to OpenCV with the same structure.
 
+#### AgileX (PiPER/PiPER-X)
+
+Bimanual template (left/right, PiPER-X example):
+
+```bash
+lerobot-human-inloop-record \
+  --robot.type=bi_piperx_follower \
+  --robot.id=my_bi_piperx_follower \
+  --robot.left_arm_config.port=<LEFT_FOLLOWER_CAN_PORT> \
+  --robot.right_arm_config.port=<RIGHT_FOLLOWER_CAN_PORT> \
+  --robot.left_arm_config.require_calibration=false \
+  --robot.right_arm_config.require_calibration=false \
+  --teleop.type=bi_piperx_leader \
+  --teleop.id=my_bi_piperx_leader \
+  --teleop.left_arm_config.port=<LEFT_LEADER_CAN_PORT> \
+  --teleop.right_arm_config.port=<RIGHT_LEADER_CAN_PORT> \
+  --teleop.left_arm_config.require_calibration=false \
+  --teleop.right_arm_config.require_calibration=false \
+  --dataset.repo_id=<HF_USERNAME_OR_ORG>/<DATASET_NAME> \
+  --dataset.single_task="<YOUR_TASK_DESCRIPTION>" \
+  --dataset.num_episodes=<NUM_EPISODES> \
+  --dataset.episode_time_s=<EPISODE_SECONDS> \
+  --dataset.reset_time_s=<RESET_SECONDS> \
+  --dataset.push_to_hub=true \
+  --display_data=true
+```
+
 Hotkeys:
 
 - `i`: toggle intervention mode (policy <-> teleop takeover)
@@ -229,6 +331,8 @@ lerobot-dataset-report --dataset <HF_USERNAME_OR_ORG>/<DATASET_NAME>
 ```
 
 This prints: dataset meta, totals, episode-length stats/histogram, success/intervention metrics, task list, and full feature schema.
+
+<a id="value-function-training"></a>
 
 ### 4) Value Function Training
 
@@ -267,6 +371,8 @@ To plug in a different value function, minimal path in this repo:
 - Add `src/lerobot/values/<your_value>/modeling_<your_value>.py` with `<YourValue>Policy(PreTrainedPolicy)` (implement at least `forward`, `predict_value`, and `build_training_raw_batch_hook` for `lerobot-value-train`).
 - Add `src/lerobot/values/<your_value>/processor_<your_value>.py` with `make_<your_value>_pre_post_processors(...)`.
 - Remove/replace the current `pistar06`-only type checks in `src/lerobot/configs/value_train.py` and `src/lerobot/scripts/lerobot_value_infer.py`.
+
+<a id="value-inference"></a>
 
 ### 5) Value Inference
 
@@ -307,31 +413,22 @@ CUDA_VISIBLE_DEVICES=<GPU_ID_LIST> accelerate launch \
 
 Parameter notes:
 
-- `--acp.n_step`: n-step advantage horizon.
-- `--acp.positive_ratio`: positive label ratio after advantage binarization (e.g., `0.3` = top 30% per task).
+```bash
+--acp.n_step: n-step advantage horizon.
+--acp.positive_ratio: positive label ratio after advantage binarization (e.g., 0.3 = top 30% per task).
+```
 
 Expected new columns:
 
-- `complementary_info.value_<TAG>`
-- `complementary_info.advantage_<TAG>`
-- `complementary_info.acp_indicator_<TAG>`
+```bash
+complementary_info.value_<TAG>
+complementary_info.advantage_<TAG>
+complementary_info.acp_indicator_<TAG>
+```
 
 These columns are written back to the original dataset specified by `--dataset.repo_id`.
 
-Visualization (optional):
-
-- Enable with `--viz.enable=true`.
-- Output videos are saved to `outputs/value_infer/<RUN_NAME>/value/viz/`.
-- Each video overlays a value curve and per-frame text (`advantage`, `acp_indicator`) on top of camera frames.
-- You can control scope with:
-  - `--viz.episodes=all` or ranges like `0-9,12`
-  - `--viz.video_key=<CAMERA_KEY>` (default picks `front` if available)
-  - `--viz.overwrite=true|false`
-  - `--viz.vcodec=<CODEC>` and `--viz.frame_storage_mode=memory|disk`
-
-Value overlay examples (SO101, smooth=11):
-
-- GIF assets are stored under `website/assets/gifs/`.
+<a id="policy-training"></a>
 
 ### 6) Policy Training
 
@@ -376,6 +473,8 @@ CUDA_VISIBLE_DEVICES=<GPU_ID_LIST> accelerate launch \
   --batch_size=32/<NUM_GPUS> \
   <POLICY_TRAIN_ARGS>
 ```
+
+<a id="closed-loop-rollout-and-next-round"></a>
 
 ### 7) Closed-loop Rollout and Next Round
 
