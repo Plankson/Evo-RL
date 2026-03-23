@@ -15,6 +15,7 @@
 """Core recording loop used by `lerobot_record.py`."""
 
 import logging
+import math
 import time
 from collections.abc import Callable
 from typing import Any, TypeVar
@@ -52,6 +53,38 @@ from lerobot.utils.utils import get_safe_torch_device
 from lerobot.utils.visualization_utils import log_rerun_data
 
 T = TypeVar("T")
+
+def _convert_joint_positions_deg_to_rad(observation: RobotObservation) -> RobotObservation:
+    """Convert observation units for the remote PI0 pipeline.
+
+    Piper joint feedback is reported in degrees, while the remote PI0 pipeline
+    expects joint positions in radians. Gripper stroke is additionally scaled
+    down by 1000 before being sent to the policy / stored in the dataset.
+    """
+    converted = dict(observation)
+    for key, value in observation.items():
+        if not key.endswith(".pos"):
+            continue
+        if "joint_" in key:
+            converted[key] = math.radians(float(value))
+            continue
+        if "gripper.pos" in key:
+            converted[key] = float(value) / 1000.0
+    return converted
+
+
+def _convert_joint_positions_rad_to_deg(action: RobotAction) -> RobotAction:
+    """Convert policy action units back to Piper execution units."""
+    converted = dict(action)
+    for key, value in action.items():
+        if not key.endswith(".pos"):
+            continue
+        if "joint_" in key:
+            converted[key] = math.degrees(float(value))
+            continue
+        if "gripper.pos" in key:
+            converted[key] = float(value) * 1000.0
+    return converted
 
 
 """ --------------- record_loop() data flow --------------------------
@@ -269,12 +302,12 @@ def record_loop(
                     logging.info("Intervention release requested (S2): returning control to policy.")
             else:
                 logging.info("Intervention toggle ignored because policy+teleop are not both active.")
-
+        # import pdb;pdb.set_trace()
         # Get robot observation
         obs = robot.get_observation()
-
         # Applies a pipeline to the raw robot observation, default is IdentityProcessor
         obs_processed = robot_observation_processor(obs)
+        obs_processed = _convert_joint_positions_deg_to_rad(obs_processed)
 
         if dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
@@ -308,6 +341,7 @@ def record_loop(
 
             # Applies a pipeline to the raw teleop action, default is IdentityProcessor
             act_processed_teleop = teleop_action_processor((act, obs))
+            act_processed_teleop = _convert_joint_positions_deg_to_rad(act_processed_teleop)
 
         elif isinstance(teleop, list):
             arm_action = run_with_connection_retry("teleop_arm.get_action", teleop_arm.get_action)
@@ -316,6 +350,8 @@ def record_loop(
             base_action = robot._from_keyboard_to_base_action(keyboard_action)
             act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
             act_processed_teleop = teleop_action_processor((act, obs))
+            act_processed_teleop = _convert_joint_positions_deg_to_rad(act_processed_teleop)
+
 
         if act_processed_policy is None and act_processed_teleop is None:
             logging.info(
@@ -362,14 +398,29 @@ def record_loop(
         else:
             action_values = act_processed_policy if act_processed_policy is not None else act_processed_teleop
 
+        selected_from_policy = act_processed_policy is not None and action_values is act_processed_policy
+        action_values_for_robot = _convert_joint_positions_rad_to_deg(action_values)
+        if selected_from_policy:
+            logging.info(
+                "Policy action debug | raw(rad)=%s | send(deg)=%s",
+                act_processed_policy,
+                action_values_for_robot,
+            )
+        else:
+            logging.info(
+                "Execution source debug | selected_from_policy=%s | action=%s",
+                selected_from_policy,
+                action_values_for_robot,
+            )
+
         # Applies a pipeline to the action, default is IdentityProcessor
-        robot_action_to_send = robot_action_processor((action_values, obs))
+        robot_action_to_send = robot_action_processor((action_values_for_robot, obs))
+        logging.info("Robot action debug | robot_action_to_send=%s", robot_action_to_send)
 
         # Send action to robot
         # Action can eventually be clipped using `max_relative_target`,
         # so action actually sent is saved in the dataset. action = postprocessor.process(action)
         # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
-        selected_from_policy = act_processed_policy is not None and action_values is act_processed_policy
         if policy_sync_executor is not None and selected_from_policy:
             _sent_action = run_with_connection_retry(
                 "policy_sync_executor.send_action",

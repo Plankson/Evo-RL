@@ -207,7 +207,6 @@ class PiperFollower(Robot):
     def _read_raw_observation(self) -> RobotObservation:
         joint_msg = self.arm.GetArmJointMsgs()
         joint_state = getattr(joint_msg, "joint_state", None)
-
         obs: RobotObservation = {}
         for joint_name in PIPER_JOINT_NAMES:
             raw_value = getattr(joint_state, joint_name, 0)
@@ -215,6 +214,7 @@ class PiperFollower(Robot):
 
         gripper_msg = self.arm.GetArmGripperMsgs()
         gripper_state = getattr(gripper_msg, "gripper_state", None)
+        obs["gripper.pos"] = abs(milli_to_unit(getattr(gripper_state, "grippers_angle", 0)))
         obs["gripper.pos"] = abs(milli_to_unit(getattr(gripper_state, "grippers_angle", 0)))
         return obs
 
@@ -272,7 +272,6 @@ class PiperFollower(Robot):
             raise RuntimeError(
                 f"{self} is not calibrated. Run `lerobot-calibrate --robot.type={self.config.type} --robot.id={self.id}` first."
             )
-
         self._refresh_motion_mode_if_needed()
 
         sent_action: dict[str, float] = {}

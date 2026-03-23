@@ -1,6 +1,6 @@
 lerobot-setup-can --mode=setup --interfaces=can_left,can_back_left,can_right,can_back_right
 
-rm -r /home/agilex/.cache/huggingface/lerobot/ACE_ROBOTICS/eval_pizero-bi-piper-fold-clothes-v0
+rm -r /home/agilex/.cache/huggingface/lerobot/ACE_ROBOTICS/eval_pizero-bi-piper-fold-clothes-test-v0
 
 lerobot-human-inloop-record \
   --robot.type=bi_piper_follower \
@@ -18,7 +18,7 @@ lerobot-human-inloop-record \
   --teleop.left_arm_config.require_calibration=false \
   --teleop.right_arm_config.require_calibration=false \
   --policy.type=remote_client \
-  --dataset.repo_id="ACE_ROBOTICS/eval_pizero-bi-piper-fold-clothes-v0" \
+  --dataset.repo_id="ACE_ROBOTICS/eval_pizero-bi-piper-fold-clothes-test-v0" \
   --dataset.single_task="fold_clothes" \
   --dataset.num_episodes=2 \
   --dataset.episode_time_s=100 \

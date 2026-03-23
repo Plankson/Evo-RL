@@ -161,7 +161,8 @@ class RemoteClientPolicy(PreTrainedPolicy):
     def __init__(self, config: RemoteClientConfig, *inputs, **kwargs):
         super().__init__(config, *inputs, **kwargs)
         self._action_queue: deque[Tensor] = deque()
-        self._client = None
+        self._client = self._make_client()
+        print('success load remote client')
 
     def _make_client(self):
         from openpi_client.websocket_client_policy import WebsocketClientPolicy
@@ -191,6 +192,7 @@ class RemoteClientPolicy(PreTrainedPolicy):
 
         observation = batch_to_client_observation(batch, self.config)
         result = self._get_client().infer(observation)
+        # import pdb;pdb.set_trace()
 
         expected_action_dim = None
         if ACTION in self.config.output_features:
