@@ -63,6 +63,7 @@ lerobot-record \
 """
 
 import logging
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from pprint import pformat
@@ -105,6 +106,7 @@ from lerobot.scripts.recording_hil import (
     _capture_policy_runtime_state,  # noqa: F401
     _predict_policy_action_with_acp_inference,  # noqa: F401
 )
+from lerobot.scripts.hdf5_episode_recorder import HDF5EpisodeRecorder
 from lerobot.scripts.recording_loop import record_loop
 from lerobot.teleoperators import (  # noqa: F401
     TeleoperatorConfig,
@@ -358,37 +360,49 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     dataset = None
     listener = None
     policy_sync_executor = None
+    use_hdf5_episode_recorder = bool(getattr(cfg, "_save_hdf5_episodes", False))
 
     try:
-        if cfg.resume:
-            dataset = LeRobotDataset(
-                cfg.dataset.repo_id,
-                root=cfg.dataset.root,
-                batch_encoding_size=cfg.dataset.video_encoding_batch_size,
-                vcodec=cfg.dataset.vcodec,
-            )
-
-            if hasattr(robot, "cameras") and len(robot.cameras) > 0:
-                dataset.start_image_writer(
-                    num_processes=cfg.dataset.num_image_writer_processes,
-                    num_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
-                )
-            sanity_check_dataset_robot_compatibility(dataset, robot, cfg.dataset.fps, dataset_features)
-        else:
-            # Create empty dataset or load existing saved episodes
-            sanity_check_dataset_name(cfg.dataset.repo_id, cfg.policy)
-            dataset = LeRobotDataset.create(
-                cfg.dataset.repo_id,
-                cfg.dataset.fps,
+        if use_hdf5_episode_recorder:
+            camera_name_map = getattr(cfg.policy, "image_key_map", None) if cfg.policy is not None else None
+            dataset = HDF5EpisodeRecorder(
+                repo_id=cfg.dataset.repo_id,
+                fps=cfg.dataset.fps,
                 root=cfg.dataset.root,
                 robot_type=robot.name,
                 features=dataset_features,
-                use_videos=cfg.dataset.video,
-                image_writer_processes=cfg.dataset.num_image_writer_processes,
-                image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
-                batch_encoding_size=cfg.dataset.video_encoding_batch_size,
-                vcodec=cfg.dataset.vcodec,
+                camera_name_map=camera_name_map,
             )
+        else:
+            if cfg.resume:
+                dataset = LeRobotDataset(
+                    cfg.dataset.repo_id,
+                    root=cfg.dataset.root,
+                    batch_encoding_size=cfg.dataset.video_encoding_batch_size,
+                    vcodec=cfg.dataset.vcodec,
+                )
+
+                if hasattr(robot, "cameras") and len(robot.cameras) > 0:
+                    dataset.start_image_writer(
+                        num_processes=cfg.dataset.num_image_writer_processes,
+                        num_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
+                    )
+                sanity_check_dataset_robot_compatibility(dataset, robot, cfg.dataset.fps, dataset_features)
+            else:
+                # Create empty dataset or load existing saved episodes
+                sanity_check_dataset_name(cfg.dataset.repo_id, cfg.policy)
+                dataset = LeRobotDataset.create(
+                    cfg.dataset.repo_id,
+                    cfg.dataset.fps,
+                    root=cfg.dataset.root,
+                    robot_type=robot.name,
+                    features=dataset_features,
+                    use_videos=cfg.dataset.video,
+                    image_writer_processes=cfg.dataset.num_image_writer_processes,
+                    image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
+                    batch_encoding_size=cfg.dataset.video_encoding_batch_size,
+                    vcodec=cfg.dataset.vcodec,
+                )
 
         # Load pretrained policy
         policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
@@ -440,7 +454,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             episode_failure_key=cfg.episode_failure_key if cfg.enable_episode_outcome_labeling else None,
         )
 
-        with VideoEncodingManager(dataset):
+        dataset_context = nullcontext() if use_hdf5_episode_recorder else VideoEncodingManager(dataset)
+        with dataset_context:
             recorded_episodes = 0
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
                 events["episode_outcome"] = None
@@ -549,7 +564,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         if listener and hasattr(listener, "stop"):
             listener.stop()
 
-        if cfg.dataset.push_to_hub:
+        if cfg.dataset.push_to_hub and use_hdf5_episode_recorder:
+            logging.warning("Ignoring `dataset.push_to_hub=true` because HDF5 episode saving is enabled.")
+        elif cfg.dataset.push_to_hub:
             if dataset is not None:
                 dataset.push_to_hub(tags=cfg.dataset.tags, private=cfg.dataset.private)
             else:
@@ -568,3 +585,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

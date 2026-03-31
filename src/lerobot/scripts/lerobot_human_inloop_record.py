@@ -38,6 +38,8 @@ from lerobot.utils.recording_annotations import (
     infer_collector_policy_version,
 )
 
+PIPER_RESET_GRIPPER_OPEN_MIN = 30.0
+
 
 def _default_failure_reset_pose_path(cfg: RecordConfig) -> Path:
     robot_id = cfg.robot.id if cfg.robot.id else "default"
@@ -49,9 +51,22 @@ def _extract_joint_pos_from_observation(observation: dict[str, Any]) -> dict[str
     return {key: float(value) for key, value in observation.items() if key.endswith(".pos")}
 
 
+def _normalize_failure_reset_pose(robot_type: str | None, joint_pos: dict[str, float]) -> dict[str, float]:
+    normalized = dict(joint_pos)
+    robot_type_normalized = (robot_type or "").lower()
+    if "piper" in robot_type_normalized and "follower" in robot_type_normalized:
+        for key, value in normalized.items():
+            if "gripper.pos" in key:
+                normalized[key] = max(float(value), PIPER_RESET_GRIPPER_OPEN_MIN)
+    return normalized
+
+
 def _save_failure_reset_pose(robot: Any, pose_path: Path) -> dict[str, float]:
     observation = robot.get_observation()
-    joint_pos = _extract_joint_pos_from_observation(observation)
+    joint_pos = _normalize_failure_reset_pose(
+        getattr(robot, "robot_type", type(robot).__name__),
+        _extract_joint_pos_from_observation(observation),
+    )
     if not joint_pos:
         raise ValueError("Could not capture failure reset pose: no '.pos' joints found in observation.")
 
@@ -66,6 +81,7 @@ def _save_failure_reset_pose(robot: Any, pose_path: Path) -> dict[str, float]:
 def _load_failure_reset_pose(pose_path: Path) -> dict[str, float]:
     with open(pose_path) as f:
         payload = json.load(f)
+    robot_type = payload.get("robot_type") if isinstance(payload, dict) else None
     joint_pos_raw = payload["joint_pos"] if isinstance(payload, dict) and "joint_pos" in payload else payload
     if not isinstance(joint_pos_raw, dict):
         raise ValueError(
@@ -74,6 +90,7 @@ def _load_failure_reset_pose(pose_path: Path) -> dict[str, float]:
     joint_pos = {str(key): float(value) for key, value in joint_pos_raw.items() if str(key).endswith(".pos")}
     if not joint_pos:
         raise ValueError(f"Invalid failure reset pose payload in {pose_path}: no '.pos' joints found.")
+    joint_pos = _normalize_failure_reset_pose(robot_type, joint_pos)
     logging.info("Loaded failure_reset_pose from %s", pose_path)
     return joint_pos
 
@@ -92,6 +109,10 @@ def _slow_reset_all_arms_to_pose(
     current_pose = _extract_joint_pos_from_observation(robot.get_observation())
     start_pose = {key: current_pose.get(key, float(target_pose[key])) for key in joint_keys}
     goal_pose = {key: float(target_pose[key]) for key in joint_keys}
+
+    if all(abs(start_pose[key] - goal_pose[key]) < 1e-6 for key in joint_keys):
+        logging.info("Arms already at the stored reset pose.")
+        return
 
     if teleop is not None and not isinstance(teleop, list) and hasattr(teleop, "set_manual_control"):
         teleop.set_manual_control(False)
@@ -117,6 +138,8 @@ class _HumanInloopFailureResetController:
     def on_record_connected(self, robot: Any, teleop: Any) -> None:
         if self.pose_path.is_file():
             self.failure_reset_pose = _load_failure_reset_pose(self.pose_path)
+            if self.failure_reset_pose is not None:
+                _slow_reset_all_arms_to_pose(robot=robot, teleop=teleop, target_pose=self.failure_reset_pose)
             return
 
         input(
@@ -125,6 +148,8 @@ class _HumanInloopFailureResetController:
             f"{self.pose_path}\n"
         )
         self.failure_reset_pose = _save_failure_reset_pose(robot=robot, pose_path=self.pose_path)
+        if self.failure_reset_pose is not None:
+            _slow_reset_all_arms_to_pose(robot=robot, teleop=teleop, target_pose=self.failure_reset_pose)
 
     def on_episode_outcome(self, robot: Any, teleop: Any, episode_success: str | None) -> None:
         if episode_success in {EPISODE_FAILURE, EPISODE_SUCCESS} and self.failure_reset_pose is not None:
@@ -136,6 +161,7 @@ def human_inloop_record(cfg: RecordConfig):
     if cfg.teleop is None:
         raise ValueError("`lerobot-human-inloop-record` requires `teleop` config.")
 
+    cfg._save_hdf5_episodes = True
     cfg.policy_sync_to_teleop = cfg.policy is not None
     cfg.intervention_state_machine_enabled = cfg.policy is not None
     cfg.enable_episode_outcome_labeling = True
@@ -172,3 +198,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

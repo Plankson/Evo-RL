@@ -41,6 +41,7 @@ from lerobot.scripts.lerobot_record import (
     record,
     record_loop,
 )
+from lerobot.scripts.recording_loop import _apply_infer_pi0_gripper_logic
 from lerobot.scripts.lerobot_replay import DatasetReplayConfig, ReplayConfig, replay
 from lerobot.scripts.lerobot_teleoperate import TeleoperateConfig, teleoperate
 from lerobot.utils.recording_annotations import EPISODE_SUCCESS
@@ -208,6 +209,40 @@ def test_record_loop_sets_leader_manual_control_during_reset():
             robot.disconnect()
 
     assert teleop.manual_control_calls == [True]
+
+
+def test_apply_infer_pi0_gripper_logic_snaps_open_close_commands():
+    policy_action = {
+        "left_joint_1.pos": 0.5,
+        "left_gripper.pos": 0.01,
+        "right_gripper.pos": 0.04,
+    }
+    robot_action = {
+        "left_joint_1.pos": 28.64788975654116,
+        "left_gripper.pos": 10.0,
+        "right_gripper.pos": 40.0,
+    }
+
+    adjusted = _apply_infer_pi0_gripper_logic(policy_action=policy_action, robot_action=robot_action)
+
+    assert adjusted["left_joint_1.pos"] == pytest.approx(robot_action["left_joint_1.pos"])
+    assert adjusted["left_gripper.pos"] == pytest.approx(-1.0)
+    assert adjusted["right_gripper.pos"] == pytest.approx(0.3)
+
+
+def test_apply_infer_pi0_gripper_logic_keeps_mid_range_values():
+    policy_action = {
+        "left_gripper.pos": 0.025,
+        "right_gripper.pos": 0.03,
+    }
+    robot_action = {
+        "left_gripper.pos": 25.0,
+        "right_gripper.pos": 30.0,
+    }
+
+    adjusted = _apply_infer_pi0_gripper_logic(policy_action=policy_action, robot_action=robot_action)
+
+    assert adjusted == robot_action
 
 
 def test_save_and_load_failure_reset_pose(tmp_path):

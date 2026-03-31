@@ -54,6 +54,11 @@ from lerobot.utils.visualization_utils import log_rerun_data
 
 T = TypeVar("T")
 
+INFER_PI0_GRIPPER_CLOSE_THRESHOLD = 0.02
+INFER_PI0_GRIPPER_OPEN_THRESHOLD = 0.03
+INFER_PI0_GRIPPER_CLOSE_COMMAND = -1
+INFER_PI0_GRIPPER_OPEN_COMMAND = 100
+
 def _convert_joint_positions_deg_to_rad(observation: RobotObservation) -> RobotObservation:
     """Convert observation units for the remote PI0 pipeline.
 
@@ -85,6 +90,27 @@ def _convert_joint_positions_rad_to_deg(action: RobotAction) -> RobotAction:
         if "gripper.pos" in key:
             converted[key] = float(value) * 1000.0
     return converted
+
+
+def _apply_infer_pi0_gripper_logic(
+    policy_action: RobotAction,
+    robot_action: RobotAction,
+) -> RobotAction:
+    """Mirror the gripper close/open thresholding used by `infer_pi0.py`.
+
+    The remote policy outputs small gripper values in policy space. We keep the
+    threshold comparison in that space, but override the final execution command
+    with the same discrete close/open values used by the original ROS script.
+    """
+    adjusted = dict(robot_action)
+    for key, value in policy_action.items():
+        if "gripper.pos" not in key:
+            continue
+        if float(value) < INFER_PI0_GRIPPER_CLOSE_THRESHOLD:
+            adjusted[key] = INFER_PI0_GRIPPER_CLOSE_COMMAND
+        elif float(value) > INFER_PI0_GRIPPER_OPEN_THRESHOLD:
+            adjusted[key] = INFER_PI0_GRIPPER_OPEN_COMMAND
+    return adjusted
 
 
 """ --------------- record_loop() data flow --------------------------
@@ -400,6 +426,11 @@ def record_loop(
 
         selected_from_policy = act_processed_policy is not None and action_values is act_processed_policy
         action_values_for_robot = _convert_joint_positions_rad_to_deg(action_values)
+        if selected_from_policy:
+            action_values_for_robot = _apply_infer_pi0_gripper_logic(
+                policy_action=act_processed_policy,
+                robot_action=action_values_for_robot,
+            )
         if selected_from_policy:
             logging.info(
                 "Policy action debug | raw(rad)=%s | send(deg)=%s",
