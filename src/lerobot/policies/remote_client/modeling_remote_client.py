@@ -88,9 +88,9 @@ def split_state_vector(
         joints = torch.cat(
             (
                 state[:6],
-                torch.zeros(2, dtype=state.dtype),
+                torch.ones(1, dtype=state.dtype) * -10000,
                 state[7:13],
-                torch.zeros(2, dtype=state.dtype),
+                torch.ones(1, dtype=state.dtype) * -10000,
             )
         ).numpy()
     else:
@@ -127,15 +127,15 @@ def batch_to_client_observation(batch: dict[str, Any], config: RemoteClientConfi
         "state.joints": joints,
         "state.gripper_w": gripper,
         #TODO: currently, ee_pos/ee_rot/ee_pos_cam/ee_rot_cam are zero numpy ndarrays,
-        "state.ee_pos": np.zeros((6,), dtype=np.float32),
-        "state.ee_rot": np.zeros((6,), dtype=np.float32),
-        "state.ee_pos_cam": np.zeros((6,), dtype=np.float32),   
-        "state.ee_rot_cam": np.zeros((6,), dtype=np.float32),
+        "state.ee_pos": np.ones((6,), dtype=np.float32) * -10000,
+        "state.ee_rot": np.ones((6,), dtype=np.float32 ) * -10000,
+        "state.ee_pos_cam": np.ones((6,), dtype=np.float32) * -10000,   
+        "state.ee_rot_cam": np.ones((6,), dtype=np.float32) * -10000,
         "prompt": task,
     }
 
 
-def normalize_remote_action_chunk(result: dict[str, Any], expected_action_dim: int | None = None) -> np.ndarray:
+def normalize_remote_action_chunk(result: dict[str, Any], expected_action_dim: int | None = None, policy_name: str = None) -> np.ndarray:
     if "actions" not in result:
         raise KeyError("Remote server response is missing required 'actions' field.")
 
@@ -150,7 +150,10 @@ def normalize_remote_action_chunk(result: dict[str, Any], expected_action_dim: i
         raise ValueError(
             f"Remote action dim mismatch: expected {expected_action_dim}, got {action_chunk.shape[1]}"
         )
-
+    if policy_name=='ace_policy':
+        action_chunk = np.concatenate(
+            [action_chunk[..., :6], action_chunk[..., 7:8], action_chunk[8:8+6], action_chunk[..., 15:16]], axis=-1
+        )
     return action_chunk
 
 
@@ -198,7 +201,7 @@ class RemoteClientPolicy(PreTrainedPolicy):
         if ACTION in self.config.output_features:
             expected_action_dim = self.config.output_features[ACTION].shape[0]
 
-        action_chunk = normalize_remote_action_chunk(result, expected_action_dim=expected_action_dim)
+        action_chunk = normalize_remote_action_chunk(result, expected_action_dim=expected_action_dim, policy_name=self.config.policy_name)
         return torch.from_numpy(action_chunk).unsqueeze(0)
 
     @torch.no_grad()
