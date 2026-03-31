@@ -122,15 +122,22 @@ def batch_to_client_observation(batch: dict[str, Any], config: RemoteClientConfi
     if not isinstance(task, str):
         raise TypeError(f"Expected task to be a string, got {type(task)}")
 
+    is_pi = _default_state_layout_for_policy_name(config.policy_name)
+    if is_pi=='pi0':
+        padding = np.ones((6,), dtype=np.float32)*-10000
+    else:
+        padding = np.ones((1,6), dtype=np.float32)*-10000
+        joints = joints[None, :]
+        gripper = gripper[None, :]
     return {
         "images": images,
         "state.joints": joints,
         "state.gripper_w": gripper,
         #TODO: currently, ee_pos/ee_rot/ee_pos_cam/ee_rot_cam are zero numpy ndarrays,
-        "state.ee_pos": np.ones((6,), dtype=np.float32) * -10000,
-        "state.ee_rot": np.ones((6,), dtype=np.float32 ) * -10000,
-        "state.ee_pos_cam": np.ones((6,), dtype=np.float32) * -10000,   
-        "state.ee_rot_cam": np.ones((6,), dtype=np.float32) * -10000,
+        "state.ee_pos": padding,
+        "state.ee_rot": padding,
+        "state.ee_pos_cam": padding,   
+        "state.ee_rot_cam": padding,
         "prompt": task,
     }
 
@@ -146,13 +153,13 @@ def normalize_remote_action_chunk(result: dict[str, Any], expected_action_dim: i
     if action_chunk.ndim != 2:
         raise ValueError(f"Expected action chunk with shape (T, D), got {action_chunk.shape}")
 
+    if policy_name=='ace_policy':
+        action_chunk = np.concatenate(
+            [action_chunk[..., :6], action_chunk[..., 7:8], action_chunk[..., 8:8+6], action_chunk[..., 15:16]], axis=-1
+        )
     if expected_action_dim is not None and action_chunk.shape[1] != expected_action_dim:
         raise ValueError(
             f"Remote action dim mismatch: expected {expected_action_dim}, got {action_chunk.shape[1]}"
-        )
-    if policy_name=='ace_policy':
-        action_chunk = np.concatenate(
-            [action_chunk[..., :6], action_chunk[..., 7:8], action_chunk[8:8+6], action_chunk[..., 15:16]], axis=-1
         )
     return action_chunk
 
