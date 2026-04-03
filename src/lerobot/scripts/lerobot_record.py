@@ -460,6 +460,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
                 events["episode_outcome"] = None
                 log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
+                before_record_episode = getattr(cfg, "_before_record_episode", None)
+                if callable(before_record_episode):
+                    before_record_episode(robot, teleop, recorded_episodes)
                 record_loop(
                     robot=robot,
                     events=events,
@@ -499,14 +502,26 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                             episode_success,
                         )
 
+                if cfg.enable_episode_outcome_labeling and episode_success is None:
+                    logging.info(
+                        "Episode %s has no explicit success/failure label; discarding buffered frames.",
+                        dataset.num_episodes,
+                    )
+                    dataset.clear_episode_buffer()
+                    continue
+
                 on_episode_outcome = getattr(cfg, "_on_record_episode_outcome", None)
                 if callable(on_episode_outcome):
                     on_episode_outcome(robot, teleop, episode_success)
 
+                skip_manual_reset_loop = bool(getattr(cfg, "_skip_reset_time_loop", False))
+
                 # Execute a few seconds without recording to give time to manually reset the environment
                 # Skip reset for the last episode to be recorded
-                if not events["stop_recording"] and (
-                    (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
+                if (
+                    not skip_manual_reset_loop
+                    and not events["stop_recording"]
+                    and ((recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"])
                 ):
                     log_say("Reset the environment", cfg.play_sounds)
 
@@ -585,4 +600,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

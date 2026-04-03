@@ -3,21 +3,24 @@ set -euo pipefail
 
 lerobot-setup-can --mode=setup --interfaces=can_left,can_back_left,can_right,can_back_right
 
-PROMPT="hang clothes on the hanger"
-DAY_FOLDER="$(date +%m%d)"
+PROMPT="fold clothes"
+#PROMPT="hang clothes on the hanger"
+#PROMPT="put the cubes into bucket"
+#PROMPT='fold clothes'
+TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 PROMPT_SLUG="$(printf '%s' "$PROMPT" | tr '[:upper:]' '[:lower:]' | sed 's/[^[:alnum:]]\+/_/g; s/^_//; s/_$//')"
-DATASET_BASE_DIR="${HOME}/evorl_dataset/${DAY_FOLDER}"
-DATASET_NAME="${PROMPT_SLUG}"
+DATASET_NAME="${PROMPT_SLUG}_${TIMESTAMP}"
+DATASET_BASE_DIR="${HOME}/evorl_dataset"
 DATASET_ROOT="${DATASET_BASE_DIR}/${DATASET_NAME}"
-DATASET_REPO_ID="ACE_ROBOTICS/eval_${DAY_FOLDER}_${DATASET_NAME}"
+DATASET_REPO_ID="ACE_ROBOTICS/eval_${DATASET_NAME}"
 
 mkdir -p "${DATASET_BASE_DIR}"
 
 SUFFIX=1
 while [ -e "${DATASET_ROOT}" ]; do
-  DATASET_NAME="${PROMPT_SLUG}_${SUFFIX}"
+  DATASET_NAME="${PROMPT_SLUG}_${TIMESTAMP}_${SUFFIX}"
   DATASET_ROOT="${DATASET_BASE_DIR}/${DATASET_NAME}"
-  DATASET_REPO_ID="ACE_ROBOTICS/eval_${DAY_FOLDER}_${DATASET_NAME}"
+  DATASET_REPO_ID="ACE_ROBOTICS/eval_${DATASET_NAME}"
   SUFFIX=$((SUFFIX + 1))
 done
 
@@ -42,18 +45,17 @@ args=(
   --dataset.repo_id="${DATASET_REPO_ID}"
   --dataset.root="${DATASET_ROOT}"
   --dataset.single_task="${PROMPT}"
-  --dataset.num_episodes=2
+  --dataset.num_episodes=30
   --dataset.episode_time_s=200
-  --dataset.reset_time_s=0
+  --dataset.reset_time_s=20
   --dataset.push_to_hub=false
   --display_data=true
   --play_sounds=false
-  --policy.policy_name=pi0
+  --policy.policy_name=ace_policy
   --policy.host=103.237.28.254
-  --policy.port=1888
+  --policy.port=7380
   --policy.chunk_size=50
   --policy.n_action_steps=36
 )
 
 lerobot-human-inloop-record "${args[@]}"
-
