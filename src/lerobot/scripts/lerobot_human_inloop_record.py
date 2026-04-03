@@ -99,7 +99,7 @@ def _slow_reset_all_arms_to_pose(
     robot: Any,
     teleop: Any,
     target_pose: dict[str, float],
-    duration_s: float = 3.0,
+    duration_s: float = 10.0,  # Note: the real reset time !
 ) -> None:
     joint_keys = [key for key in robot.action_features if key.endswith(".pos") and key in target_pose]
     if not joint_keys:
@@ -173,6 +173,7 @@ def human_inloop_record(cfg: RecordConfig):
         failure_reset_controller = _HumanInloopFailureResetController(cfg)
         cfg._on_record_connected = failure_reset_controller.on_record_connected
         cfg._on_record_episode_outcome = failure_reset_controller.on_episode_outcome
+        cfg._skip_reset_time_loop = True
 
     logging.info(
         "Human-in-loop recording is enabled. Press '%s' to toggle takeover. "

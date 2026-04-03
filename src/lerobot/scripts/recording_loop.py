@@ -431,18 +431,18 @@ def record_loop(
                 policy_action=act_processed_policy,
                 robot_action=action_values_for_robot,
             )
-        if selected_from_policy:
-            logging.info(
-                "Policy action debug | raw(rad)=%s | send(deg)=%s",
-                act_processed_policy,
-                action_values_for_robot,
-            )
-        else:
-            logging.info(
-                "Execution source debug | selected_from_policy=%s | action=%s",
-                selected_from_policy,
-                action_values_for_robot,
-            )
+        # if selected_from_policy:
+        #     logging.info(
+        #         "Policy action debug | raw(rad)=%s | send(deg)=%s",
+        #         act_processed_policy,
+        #         action_values_for_robot,
+        #     )
+        # else:
+        #     logging.info(
+        #         "Execution source debug | selected_from_policy=%s | action=%s",
+        #         selected_from_policy,
+        #         action_values_for_robot,
+        #     )
 
         # Applies a pipeline to the action, default is IdentityProcessor
         robot_action_to_send = robot_action_processor((action_values_for_robot, obs))
