@@ -215,11 +215,9 @@ class RemoteClientPolicy(PreTrainedPolicy):
     def select_action(self, batch: dict[str, Tensor], **kwargs: ActionSelectKwargs) -> Tensor:
         del kwargs
         self.eval()
-        print('start infer')
         if len(self._action_queue) == 0:
             actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
             self._action_queue.extend(actions.transpose(0, 1))
-        print('end infer')
 
         return self._action_queue.popleft()
 

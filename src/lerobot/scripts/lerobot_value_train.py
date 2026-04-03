@@ -5,7 +5,7 @@ import time
 from contextlib import nullcontext
 from pprint import pformat
 from typing import Any
-
+from tqdm import tqdm
 import torch
 from accelerate import Accelerator
 from termcolor import colored
@@ -241,8 +241,7 @@ def value_train(
         )
 
     logged_first_prompt = False
-
-    for _ in range(step, cfg.steps):
+    for _ in tqdm((range(step, cfg.steps))):
         start_time = time.perf_counter()
         batch = next(dl_iter)
         if value_target_raw_batch_hook is not None:
