@@ -140,12 +140,22 @@ class ValueTrainingLeRobotDataset(torch.utils.data.Dataset):
 
         task_names: list[str] = []
         seen_tasks: set[str] = set()
+        episode_tables: list[datasets.Dataset] = []
         for dataset in tqdm(
             self._datasets,
             desc="Preparing value dataset metadata",
         ):
-            for task_name in dataset.meta.tasks.index:
-                task_name = str(task_name)
+            episode_table = _episode_table(dataset)
+            episode_tables.append(episode_table)
+
+            candidate_tasks: list[str] = [str(name) for name in dataset.meta.tasks.index]
+            for tasks in episode_table["tasks"]:
+                if isinstance(tasks, list):
+                    candidate_tasks.extend(str(task) for task in tasks)
+                else:
+                    candidate_tasks.append(str(tasks))
+
+            for task_name in candidate_tasks:
                 if task_name not in seen_tasks:
                     seen_tasks.add(task_name)
                     task_names.append(task_name)
@@ -171,8 +181,8 @@ class ValueTrainingLeRobotDataset(torch.utils.data.Dataset):
         frame_offset = 0
         episode_offset = 0
 
-        for dataset, repo_id in tqdm(
-            list(zip(self._datasets, self.repo_ids, strict=True)),
+        for dataset, repo_id, episode_table in tqdm(
+            list(zip(self._datasets, self.repo_ids, episode_tables, strict=True)),
             desc="Building value dataset",
         ):
             sample_starts.append(sample_offset)
@@ -188,18 +198,23 @@ class ValueTrainingLeRobotDataset(torch.utils.data.Dataset):
             sample_offset += len(dataset)
 
             raw_frames = dataset.hf_dataset.with_format(None)
-            local_task_indices = np.asarray(raw_frames["task_index"], dtype=np.int64)
-            local_task_names = dataset.meta.tasks.index.take(local_task_indices)
-            frame_rows["episode_index"].extend(
-                (np.asarray(raw_frames["episode_index"], dtype=np.int64) + episode_offset).tolist()
-            )
+            frame_episode_indices = np.asarray(raw_frames["episode_index"], dtype=np.int64)
+            frame_rows["episode_index"].extend((frame_episode_indices + episode_offset).tolist())
             frame_rows["frame_index"].extend(np.asarray(raw_frames["frame_index"], dtype=np.int64).tolist())
             frame_rows["index"].extend((np.asarray(raw_frames["index"], dtype=np.int64) + frame_offset).tolist())
-            frame_rows["task_index"].extend(
-                task_table.loc[list(local_task_names), "task_index"].to_numpy(dtype=np.int64).tolist()
-            )
 
-            episode_table = _episode_table(dataset)
+            episode_task_names: dict[int, str] = {}
+            for ep_idx, tasks in zip(episode_table["episode_index"], episode_table["tasks"], strict=True):
+                ep_idx_int = int(ep_idx)
+                if isinstance(tasks, list):
+                    episode_task_names[ep_idx_int] = str(tasks[0])
+                else:
+                    episode_task_names[ep_idx_int] = str(tasks)
+            frame_task_indices = [
+                int(task_table.loc[episode_task_names[int(ep_idx)], "task_index"]) for ep_idx in frame_episode_indices
+            ]
+            frame_rows["task_index"].extend(frame_task_indices)
+
             row_count = len(episode_table["episode_index"])
             episode_rows["episode_index"].extend(
                 int(value) + episode_offset for value in episode_table["episode_index"]
