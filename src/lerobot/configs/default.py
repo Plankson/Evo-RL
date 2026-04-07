@@ -26,7 +26,7 @@ class DatasetConfig:
     # keys common between the datasets are kept. Each dataset gets and additional transform that inserts the
     # "dataset_index" into the returned item. The index mapping is made according to the order in which the
     # datasets are provided.
-    repo_id: str
+    repo_id: str | list[str]
     # Root directory where the dataset will be stored (e.g. 'dataset/path').
     root: str | None = None
     episodes: list[int] | None = None
@@ -42,7 +42,7 @@ class WandBConfig:
     enable: bool = False
     # Set to true to disable saving an artifact despite training.save_checkpoint=True
     disable_artifact: bool = False
-    project: str = "lerobot"
+    project: str = "human-in-loop-rl"
     entity: str | None = None
     notes: str | None = None
     run_id: str | None = None

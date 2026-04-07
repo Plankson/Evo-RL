@@ -39,6 +39,7 @@ from lerobot.utils.recording_annotations import (
 )
 
 PIPER_RESET_GRIPPER_OPEN_MIN = 30.0
+POLICY_START_POSE_PATH = Path("./reset_state/reset.json")
 
 
 def _default_failure_reset_pose_path(cfg: RecordConfig) -> Path:
@@ -133,6 +134,8 @@ def _slow_reset_all_arms_to_pose(
 class _HumanInloopFailureResetController:
     def __init__(self, cfg: RecordConfig):
         self.pose_path = _default_failure_reset_pose_path(cfg)
+        self.policy_start_pose_path = POLICY_START_POSE_PATH if POLICY_START_POSE_PATH.is_file() else None
+        self.policy_start_pose: dict[str, float] | None = None
         self.failure_reset_pose: dict[str, float] | None = None
 
     def on_record_connected(self, robot: Any, teleop: Any) -> None:
@@ -155,6 +158,14 @@ class _HumanInloopFailureResetController:
         if episode_success in {EPISODE_FAILURE, EPISODE_SUCCESS} and self.failure_reset_pose is not None:
             _slow_reset_all_arms_to_pose(robot=robot, teleop=teleop, target_pose=self.failure_reset_pose)
 
+    def before_record_episode(self, robot: Any, teleop: Any, episode_idx: int) -> None:
+        # Move to the policy start pose (if provided) right before policy inference kicks in.
+        if self.policy_start_pose_path is None:
+            return
+        if self.policy_start_pose is None:
+            self.policy_start_pose = _load_failure_reset_pose(self.policy_start_pose_path)
+        _slow_reset_all_arms_to_pose(robot=robot, teleop=teleop, target_pose=self.policy_start_pose, duration_s=3.0)
+
 
 @parser.wrap()
 def human_inloop_record(cfg: RecordConfig):
@@ -174,6 +185,7 @@ def human_inloop_record(cfg: RecordConfig):
         failure_reset_controller = _HumanInloopFailureResetController(cfg)
         cfg._on_record_connected = failure_reset_controller.on_record_connected
         cfg._on_record_episode_outcome = failure_reset_controller.on_episode_outcome
+        cfg._before_record_episode = failure_reset_controller.before_record_episode
         cfg._skip_reset_time_loop = True
 
     logging.info(

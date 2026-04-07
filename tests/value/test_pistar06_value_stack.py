@@ -3,6 +3,8 @@
 import json
 from types import SimpleNamespace
 
+import datasets
+import pandas as pd
 import pytest
 import torch
 from safetensors.torch import load_file
@@ -11,6 +13,8 @@ from torch import nn
 import lerobot.processor.tokenizer_processor as tokenizer_processor
 import lerobot.values.pistar06.modeling_pistar06 as pistar06_modeling
 from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
+from lerobot.datasets.data_constant import AGILEX_OURS_FOLD_CLOTH_V2, resolve_dataset_repo_id
+from lerobot.datasets.value_training_dataset import ValueTrainingLeRobotDataset
 from lerobot.values.pistar06.configuration_pistar06 import Pistar06Config
 from lerobot.values.pistar06.modeling_pistar06 import (
     PISTAR06_SAVE_INFO,
@@ -117,6 +121,25 @@ class _DummyAutoConfig:
         return SimpleNamespace(architectures=[])
 
 
+class _GatedAutoConfig:
+    @classmethod
+    def from_pretrained(cls, *args, **kwargs):
+        del args, kwargs
+        raise OSError(
+            "403 Forbidden: Please enable access to public gated repositories in your fine-grained token settings."
+        )
+
+
+class _RecordingAutoConfig:
+    last_kwargs = None
+
+    @classmethod
+    def from_pretrained(cls, *args, **kwargs):
+        del args
+        cls.last_kwargs = dict(kwargs)
+        return SimpleNamespace(architectures=[])
+
+
 @pytest.fixture
 def hf_stubs(monkeypatch):
     monkeypatch.setattr(tokenizer_processor, "AutoTokenizer", _DummyTokenizer)
@@ -156,6 +179,222 @@ class _TaskIndexTable:
         self.index = mapping.keys()
         self.loc = _TaskLocAccessor(mapping)
 
+
+def test_resolve_dataset_repo_id_supports_named_constant():
+    assert resolve_dataset_repo_id("AGILEX_OURS_FOLD_CLOTH_V2") == AGILEX_OURS_FOLD_CLOTH_V2
+    assert resolve_dataset_repo_id("AGILEX_ours_fold_cloth_v2") == AGILEX_OURS_FOLD_CLOTH_V2
+    assert resolve_dataset_repo_id("/tmp/single_dataset") == "/tmp/single_dataset"
+
+
+def test_pistar06_gated_repo_error_is_actionable(hf_stubs, monkeypatch):
+    monkeypatch.setattr(pistar06_modeling, "AutoConfig", _GatedAutoConfig)
+
+    cfg = Pistar06Config(camera_features=["observation.images.front"])
+
+    with pytest.raises(RuntimeError, match="gated"):
+        Pistar06Policy(config=cfg)
+
+
+def test_pistar06_forwards_explicit_hf_load_kwargs(hf_stubs, monkeypatch):
+    monkeypatch.setattr(pistar06_modeling, "AutoConfig", _RecordingAutoConfig)
+    _RecordingAutoConfig.last_kwargs = None
+
+    cfg = Pistar06Config(camera_features=["observation.images.front"])
+
+    Pistar06Policy(
+        config=cfg,
+        hf_token="test-token",
+        hf_cache_dir="/tmp/pistar06-cache",
+        hf_local_files_only=True,
+    )
+
+    assert _RecordingAutoConfig.last_kwargs is not None
+    assert _RecordingAutoConfig.last_kwargs["token"] == "test-token"
+    assert _RecordingAutoConfig.last_kwargs["cache_dir"] == "/tmp/pistar06-cache"
+    assert _RecordingAutoConfig.last_kwargs["local_files_only"] is True
+
+
+class _FakeLeRobotDataset:
+    def __init__(
+        self,
+        repo_id: str,
+        items: list[dict[str, torch.Tensor | str]],
+        features: dict[str, dict],
+        stats: dict[str, dict[str, torch.Tensor]],
+        task_names: list[str],
+    ):
+        self.repo_id = repo_id
+        self._items = items
+        self.hf_dataset = datasets.Dataset.from_dict(
+            {
+                "index": [int(item["index"].item()) for item in items],
+                "frame_index": [int(item["frame_index"].item()) for item in items],
+                "episode_index": [int(item["episode_index"].item()) for item in items],
+                "task_index": [int(item["task_index"].item()) for item in items],
+            }
+        )
+        episode_tasks = []
+        for item in items:
+            task_idx = int(item["task_index"].item())
+            episode_tasks.append(task_names[task_idx])
+        self.meta = SimpleNamespace(
+            info={
+                "fps": 30,
+                "robot_type": "CobotMagic",
+                "features": features,
+                "total_frames": len(items),
+                "total_episodes": len(items),
+                "total_tasks": len(task_names),
+            },
+            features=features,
+            stats=stats,
+            tasks=pd.DataFrame({"task_index": range(len(task_names))}, index=task_names),
+            episodes=datasets.Dataset.from_dict(
+                {
+                    "episode_index": [int(item["episode_index"].item()) for item in items],
+                    "tasks": [[episode_tasks[i]] for i in range(len(items))],
+                    "length": [1] * len(items),
+                    "dataset_from_index": [int(item["index"].item()) for item in items],
+                    "dataset_to_index": [int(item["index"].item()) + 1 for item in items],
+                }
+            ),
+            camera_keys=[key for key, feature in features.items() if feature["dtype"] in {"image", "video"}],
+            fps=30,
+            robot_type="CobotMagic",
+        )
+        self.episodes = None
+
+    def __len__(self):
+        return len(self._items)
+
+    def __getitem__(self, index):
+        return self._items[index]
+
+
+def _make_fake_feature(shape: tuple[int, ...], names: list[str] | None = None, dtype: str = "float32") -> dict:
+    return {"dtype": dtype, "shape": shape, "names": names}
+
+
+def _make_fake_stats(shape: int | tuple[int, ...]) -> dict[str, torch.Tensor]:
+    tensor_shape = (shape,) if isinstance(shape, int) else shape
+    return {
+        "mean": torch.zeros(tensor_shape),
+        "std": torch.ones(tensor_shape),
+        "min": -torch.ones(tensor_shape),
+        "max": torch.ones(tensor_shape),
+        "q01": -0.5 * torch.ones(tensor_shape),
+        "q10": -0.25 * torch.ones(tensor_shape),
+        "q50": torch.zeros(tensor_shape),
+        "q90": 0.25 * torch.ones(tensor_shape),
+        "q99": 0.5 * torch.ones(tensor_shape),
+        "count": torch.tensor([4.0]),
+    }
+
+
+def test_value_training_dataset_concatenates_and_canonicalizes_raw_keys():
+    features_a = {
+        "global_image": _make_fake_feature((4, 4, 3), ["height", "width", "channels"], dtype="video"),
+        "left_image": _make_fake_feature((4, 4, 3), ["height", "width", "channels"], dtype="video"),
+        "right_image": _make_fake_feature((4, 4, 3), ["height", "width", "channels"], dtype="video"),
+        "state.joints": _make_fake_feature((12,), [f"state.joints.{i}" for i in range(12)]),
+        "state.gripper_w": _make_fake_feature((2,), ["state.gripper_w.0", "state.gripper_w.1"]),
+    }
+    features_b = {
+        **features_a,
+        "state.gripper": _make_fake_feature((1,), ["state.gripper.0"]),
+    }
+    stats_a = {
+        "global_image": _make_fake_stats((3, 1, 1)),
+        "left_image": _make_fake_stats((3, 1, 1)),
+        "right_image": _make_fake_stats((3, 1, 1)),
+        "state.joints": _make_fake_stats(12),
+        "state.gripper_w": _make_fake_stats(2),
+    }
+    stats_b = {
+        **stats_a,
+        "state.gripper": _make_fake_stats(1),
+    }
+
+    ds_a = _FakeLeRobotDataset(
+        "ds_a",
+        items=[
+            {
+                "index": torch.tensor(0),
+                "frame_index": torch.tensor(0),
+                "episode_index": torch.tensor(0),
+                "task_index": torch.tensor(0),
+                "task": "fold clothes",
+                "global_image": torch.ones(3, 4, 4),
+                "left_image": 2 * torch.ones(3, 4, 4),
+                "right_image": 3 * torch.ones(3, 4, 4),
+                "state.joints": torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]),
+                "state.gripper_w": torch.tensor([13.0, 14.0]),
+            },
+            {
+                "index": torch.tensor(1),
+                "frame_index": torch.tensor(0),
+                "episode_index": torch.tensor(1),
+                "task_index": torch.tensor(0),
+                "task": "fold clothes",
+                "global_image": 4 * torch.ones(3, 4, 4),
+                "left_image": 5 * torch.ones(3, 4, 4),
+                "right_image": 6 * torch.ones(3, 4, 4),
+                "state.joints": torch.tensor([15.0, 16.0, 17.0, 18.0, 19.0, 20.0, 21.0, 22.0, 23.0, 24.0, 25.0, 26.0]),
+                "state.gripper_w": torch.tensor([27.0, 28.0]),
+            },
+        ],
+        features=features_a,
+        stats=stats_a,
+        task_names=["fold clothes"],
+    )
+    ds_b = _FakeLeRobotDataset(
+        "ds_b",
+        items=[
+            {
+                "index": torch.tensor(0),
+                "frame_index": torch.tensor(0),
+                "episode_index": torch.tensor(0),
+                "task_index": torch.tensor(0),
+                "task": "fold clothes smaller",
+                "global_image": 7 * torch.ones(3, 4, 4),
+                "left_image": 8 * torch.ones(3, 4, 4),
+                "right_image": 9 * torch.ones(3, 4, 4),
+                "state.joints": torch.tensor([31.0, 32.0, 33.0, 34.0, 35.0, 36.0, 37.0, 38.0, 39.0, 40.0, 41.0, 42.0]),
+                "state.gripper_w": torch.tensor([43.0, 44.0]),
+                "state.gripper": torch.tensor([99.0]),
+            },
+        ],
+        features=features_b,
+        stats=stats_b,
+        task_names=["fold clothes smaller"],
+    )
+
+    dataset = ValueTrainingLeRobotDataset([ds_a, ds_b], repo_ids=["ds_a", "ds_b"])
+
+    assert dataset.meta.camera_keys == [
+        "observation.images.global_image",
+        "observation.images.left_image",
+        "observation.images.right_image",
+    ]
+    assert tuple(dataset.meta.features[OBS_STATE]["shape"]) == (14,)
+    assert dataset.num_frames == 3
+    assert dataset.num_episodes == 3
+    assert dataset.hf_dataset["index"] == [0, 1, 2]
+    assert dataset.hf_dataset["episode_index"] == [0, 1, 2]
+    assert dataset.hf_dataset["task_index"] == [0, 0, 1]
+    assert dataset.meta.episodes["episode_success"] == ["success", "success", "success"]
+
+    first = dataset[0]
+    assert torch.equal(first[OBS_STATE], torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 13.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 14.0]))
+    assert torch.equal(first["observation.images.global_image"], torch.ones(3, 4, 4))
+    assert first["task"] == "fold clothes"
+    assert first["source_repo_id"] == "ds_a"
+
+    last = dataset[2]
+    assert int(last["index"].item()) == 2
+    assert int(last["episode_index"].item()) == 2
+    assert last["source_repo_id"] == "ds_b"
+    assert torch.equal(last[OBS_STATE], torch.tensor([31.0, 32.0, 33.0, 34.0, 35.0, 36.0, 43.0, 37.0, 38.0, 39.0, 40.0, 41.0, 42.0, 44.0]))
 
 def test_pistar06_processor_pads_missing_cameras_and_tokenizes(hf_stubs):
     del hf_stubs

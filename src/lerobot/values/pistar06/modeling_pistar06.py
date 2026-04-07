@@ -212,25 +212,109 @@ def _resolve_norm_stats(
     return mean, std
 
 
+def _iter_exception_messages(exc: BaseException) -> list[str]:
+    messages: list[str] = []
+    current: BaseException | None = exc
+    visited: set[int] = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        message = str(current).strip()
+        if message:
+            messages.append(message)
+        next_exc = current.__cause__ or current.__context__
+        current = next_exc if isinstance(next_exc, BaseException) else None
+    return messages
+
+
+def _is_gated_repo_access_error(exc: BaseException) -> bool:
+    markers = (
+        "public gated repositor",
+        "public gated repo",
+        "gated repositor",
+        "403 forbidden",
+        "please enable access",
+    )
+    return any(any(marker in message.lower() for marker in markers) for message in _iter_exception_messages(exc))
+
+
+def _format_gated_repo_access_error(repo_id: str, exc: BaseException) -> RuntimeError:
+    return RuntimeError(
+        f"Failed to load Hugging Face backbone '{repo_id}'. "
+        "This repository appears to be gated. "
+        "Accept the repository license on Hugging Face and use a token with access to public gated repositories "
+        "(for fine-grained tokens), or switch `value.language_repo_id` to an ungated model. "
+        f"Original error: {exc}"
+    )
+
+
+def _build_hf_load_kwargs(
+    *,
+    revision: str | None,
+    token: str | bool | None = None,
+    cache_dir: str | Path | None = None,
+    local_files_only: bool = False,
+    dtype: torch.dtype | None = None,
+) -> dict[str, Any]:
+    load_kwargs: dict[str, Any] = {"revision": revision}
+    if token is not None:
+        load_kwargs["token"] = token
+    if cache_dir is not None:
+        load_kwargs["cache_dir"] = str(cache_dir)
+    if local_files_only:
+        load_kwargs["local_files_only"] = True
+    if dtype is not None:
+        load_kwargs["torch_dtype"] = dtype
+    return load_kwargs
+
+
 def _load_language_model(
     repo_id: str,
     revision: str | None,
     dtype: torch.dtype,
+    *,
+    token: str | bool | None = None,
+    cache_dir: str | Path | None = None,
+    local_files_only: bool = False,
 ) -> nn.Module:
     if AutoConfig is None or AutoModelForCausalLM is None or AutoModel is None:
-        raise ImportError("transformers is not installed. Install with `pip install 'lerobot[pi0]'`.")
+        raise ImportError(
+            "The 'transformers' library is not installed. "
+            "Please install it with `pip install 'lerobot[transformers-dep]'`."
+        )
 
-    model_config = AutoConfig.from_pretrained(repo_id, revision=revision)
+    config_load_kwargs = _build_hf_load_kwargs(
+        revision=revision,
+        token=token,
+        cache_dir=cache_dir,
+        local_files_only=local_files_only,
+    )
+    try:
+        model_config = AutoConfig.from_pretrained(repo_id, **config_load_kwargs)
+    except (HfHubHTTPError, OSError) as exc:
+        if _is_gated_repo_access_error(exc):
+            raise _format_gated_repo_access_error(repo_id, exc) from exc
+        raise
     architectures = getattr(model_config, "architectures", None) or []
     prefer_causal_lm = any(isinstance(arch, str) and arch.endswith("ForCausalLM") for arch in architectures)
 
+    model_load_kwargs = _build_hf_load_kwargs(
+        revision=revision,
+        token=token,
+        cache_dir=cache_dir,
+        local_files_only=local_files_only,
+        dtype=dtype,
+    )
     if prefer_causal_lm:
-        lm_with_head, loading_info = AutoModelForCausalLM.from_pretrained(
-            repo_id,
-            revision=revision,
-            torch_dtype=dtype,
-            output_loading_info=True,
-        )
+        try:
+            lm_with_head, loading_info = AutoModelForCausalLM.from_pretrained(
+                repo_id,
+                output_loading_info=True,
+                **model_load_kwargs,
+            )
+        except (HfHubHTTPError, OSError) as exc:
+            if _is_gated_repo_access_error(exc):
+                raise _format_gated_repo_access_error(repo_id, exc) from exc
+            raise
         _validate_loading_info(repo_id, "language_model(causal_lm)", loading_info)
         if not hasattr(lm_with_head, "model"):
             raise RuntimeError(
@@ -238,12 +322,16 @@ def _load_language_model(
             )
         return lm_with_head.model
 
-    language_model, loading_info = AutoModel.from_pretrained(
-        repo_id,
-        revision=revision,
-        torch_dtype=dtype,
-        output_loading_info=True,
-    )
+    try:
+        language_model, loading_info = AutoModel.from_pretrained(
+            repo_id,
+            output_loading_info=True,
+            **model_load_kwargs,
+        )
+    except (HfHubHTTPError, OSError) as exc:
+        if _is_gated_repo_access_error(exc):
+            raise _format_gated_repo_access_error(repo_id, exc) from exc
+        raise
     _validate_loading_info(repo_id, "language_model(auto_model)", loading_info)
     if not isinstance(language_model, nn.Module):
         raise TypeError(
@@ -253,30 +341,62 @@ def _load_language_model(
 
 
 class Pistar06Model(nn.Module):
-    def __init__(self, cfg: Pistar06Config):
+    def __init__(
+        self,
+        cfg: Pistar06Config,
+        *,
+        hf_token: str | bool | None = None,
+        hf_cache_dir: str | Path | None = None,
+        hf_local_files_only: bool = False,
+    ):
         super().__init__()
         if AutoModel is None or AutoImageProcessor is None:
-            raise ImportError("transformers is not installed. Install with `pip install 'lerobot[pi0]'`.")
+            raise ImportError(
+                "The 'transformers' library is not installed. "
+                "Please install it with `pip install 'lerobot[transformers-dep]'`."
+            )
 
         self.cfg = cfg
         self.model_dtype = _resolve_load_dtype(cfg.dtype)
 
-        self.vision_encoder = AutoModel.from_pretrained(
-            cfg.vision_repo_id,
+        vision_load_kwargs = _build_hf_load_kwargs(
             revision=cfg.vision_revision,
-            torch_dtype=self.model_dtype,
+            token=hf_token,
+            cache_dir=hf_cache_dir,
+            local_files_only=hf_local_files_only,
+            dtype=self.model_dtype,
         )
+        try:
+            self.vision_encoder = AutoModel.from_pretrained(cfg.vision_repo_id, **vision_load_kwargs)
+        except (HfHubHTTPError, OSError) as exc:
+            if _is_gated_repo_access_error(exc):
+                raise _format_gated_repo_access_error(cfg.vision_repo_id, exc) from exc
+            raise
         self.language_model = _load_language_model(
             repo_id=cfg.language_repo_id,
             revision=cfg.language_revision,
             dtype=self.model_dtype,
+            token=hf_token,
+            cache_dir=hf_cache_dir,
+            local_files_only=hf_local_files_only,
         )
 
-        image_processor = AutoImageProcessor.from_pretrained(
-            cfg.vision_repo_id,
+        image_processor_load_kwargs = _build_hf_load_kwargs(
             revision=cfg.vision_revision,
-            use_fast=True,
+            token=hf_token,
+            cache_dir=hf_cache_dir,
+            local_files_only=hf_local_files_only,
         )
+        try:
+            image_processor = AutoImageProcessor.from_pretrained(
+                cfg.vision_repo_id,
+                use_fast=True,
+                **image_processor_load_kwargs,
+            )
+        except (HfHubHTTPError, OSError) as exc:
+            if _is_gated_repo_access_error(exc):
+                raise _format_gated_repo_access_error(cfg.vision_repo_id, exc) from exc
+            raise
         image_height, image_width = _resolve_image_size(image_processor)
         image_mean, image_std = _resolve_norm_stats(image_processor)
         self.image_resolution = (image_height, image_width)
@@ -467,10 +587,20 @@ class Pistar06Policy(PreTrainedPolicy):
         dataset_meta=None,
         **kwargs: Any,
     ):
-        del dataset_meta, kwargs
+        del dataset_meta
+        hf_token = kwargs.pop("hf_token", None)
+        hf_cache_dir = kwargs.pop("hf_cache_dir", None)
+        hf_local_files_only = bool(kwargs.pop("hf_local_files_only", False))
+        if kwargs:
+            logging.debug("Ignoring unsupported Pistar06Policy init kwargs: %s", sorted(kwargs))
         super().__init__(config)
         self.config = config
-        self.model = Pistar06Model(config)
+        self.model = Pistar06Model(
+            config,
+            hf_token=hf_token,
+            hf_cache_dir=hf_cache_dir,
+            hf_local_files_only=hf_local_files_only,
+        )
 
         self.register_buffer(
             "bin_centers",
@@ -578,6 +708,11 @@ class Pistar06Policy(PreTrainedPolicy):
         strict: bool = False,
         **kwargs: Any,
     ) -> Pistar06Policy:
+        model_init_kwargs = dict(kwargs)
+        model_init_kwargs.setdefault("hf_token", token)
+        model_init_kwargs.setdefault("hf_cache_dir", cache_dir)
+        model_init_kwargs.setdefault("hf_local_files_only", local_files_only)
+
         save_info = cls._load_save_info(
             pretrained_name_or_path=pretrained_name_or_path,
             force_download=force_download,
@@ -610,7 +745,7 @@ class Pistar06Policy(PreTrainedPolicy):
             local_files_only=local_files_only,
             revision=revision,
             strict=effective_strict,
-            **kwargs,
+            **model_init_kwargs,
         )
 
     def get_optim_params(self):

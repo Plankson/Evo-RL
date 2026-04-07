@@ -89,3 +89,23 @@ LIBERO_KEY_JOINTS_POS = "robot_state/joints/pos"
 LIBERO_KEY_JOINTS_VEL = "robot_state/joints/vel"
 LIBERO_KEY_PIXELS_AGENTVIEW = "pixels/agentview_image"
 LIBERO_KEY_PIXELS_EYE_IN_HAND = "pixels/robot0_eye_in_hand_image"
+
+
+
+
+
+# constants for ACE dataset
+STATE_JOINTS_KEY = "state.joints"
+STATE_GRIPPER_KEY = "state.gripper_w"
+RAW_CAMERA_KEYS = ["global_image", "left_image", "right_image"]
+CANONICAL_CAMERA_KEYS = [
+    "observation.images.global_image",
+    "observation.images.left_image",
+    "observation.images.right_image",
+]
+ALIGNED_STATE_NAMES = [
+    "observation.state.left_joints",
+    "observation.state.left_gripper",
+    "observation.state.right_joints",
+    "observation.state.right_gripper",
+]

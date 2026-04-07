@@ -15,8 +15,10 @@
 # limitations under the License.
 import logging
 from pprint import pformat
+from pathlib import Path
 
 import torch
+from tqdm.auto import tqdm
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
@@ -26,7 +28,9 @@ from lerobot.datasets.lerobot_dataset import (
     MultiLeRobotDataset,
 )
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
+from lerobot.datasets.data_constant import resolve_dataset_repo_id
 from lerobot.datasets.transforms import ImageTransforms
+from lerobot.datasets.value_training_dataset import ValueTrainingLeRobotDataset
 from lerobot.utils.constants import ACTION, OBS_PREFIX, REWARD
 
 IMAGENET_STATS = {
@@ -83,8 +87,36 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     image_transforms = (
         ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
     )
+    cfg.dataset.repo_id = resolve_dataset_repo_id(cfg.dataset.repo_id)
 
-    if isinstance(cfg.dataset.repo_id, str):
+    if getattr(cfg.policy, "type", None) == "pistar06":
+        if cfg.dataset.streaming:
+            raise NotImplementedError("Value training with '--value.type=pistar06' does not support streaming.")
+
+        repo_ids = [cfg.dataset.repo_id] if isinstance(cfg.dataset.repo_id, str) else list(cfg.dataset.repo_id)
+        datasets_ = []
+        for repo_id in tqdm(repo_ids, desc="Loading value datasets"):
+            dataset_repo_id = repo_id
+            dataset_root = cfg.dataset.root
+            if dataset_root is None and Path(repo_id).is_dir():
+                dataset_repo_id = Path(repo_id).name
+                dataset_root = repo_id
+
+            datasets_.append(
+                LeRobotDataset(
+                    dataset_repo_id,
+                    root=dataset_root,
+                    episodes=cfg.dataset.episodes,
+                    delta_timestamps=None,
+                    image_transforms=image_transforms,
+                    revision=cfg.dataset.revision,
+                    video_backend=cfg.dataset.video_backend,
+                    tolerance_s=cfg.tolerance_s,
+                )
+            )
+
+        dataset = ValueTrainingLeRobotDataset(datasets_, repo_ids=repo_ids)
+    elif isinstance(cfg.dataset.repo_id, str):
         ds_meta = LeRobotDatasetMetadata(
             cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision
         )
