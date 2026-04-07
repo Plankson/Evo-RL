@@ -211,6 +211,8 @@ class RecordConfig:
     play_sounds: bool = True
     # Resume recording on an existing dataset.
     resume: bool = False
+    # If True, run the recording flow but discard all collected episode data.
+    test_mode: bool = False
     # In policy mode, broadcast the same robot action to the teleop arm via `teleop.send_feedback`.
     policy_sync_to_teleop: bool = False
     # Use parallel dispatch to reduce action broadcast latency when syncing policy to teleop.
@@ -488,6 +490,14 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     communication_retry_interval_s=cfg.communication_retry_interval_s,
                 )
 
+                if events["stop_recording"]:
+                    logging.info(
+                        "Stop recording requested; discarding buffered frames for episode %s without saving.",
+                        dataset.num_episodes,
+                    )
+                    dataset.clear_episode_buffer()
+                    break
+
                 episode_success = None
                 if cfg.enable_episode_outcome_labeling:
                     episode_success = resolve_episode_success_label(
@@ -557,10 +567,17 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     dataset.clear_episode_buffer()
                     continue
 
-                extra_episode_metadata = (
-                    {"episode_success": episode_success} if cfg.enable_episode_outcome_labeling else None
-                )
-                dataset.save_episode(extra_episode_metadata=extra_episode_metadata)
+                if cfg.test_mode:
+                    logging.info(
+                        "Test mode enabled; discarding buffered frames for episode %s without saving.",
+                        dataset.num_episodes,
+                    )
+                    dataset.clear_episode_buffer()
+                else:
+                    extra_episode_metadata = (
+                        {"episode_success": episode_success} if cfg.enable_episode_outcome_labeling else None
+                    )
+                    dataset.save_episode(extra_episode_metadata=extra_episode_metadata)
                 recorded_episodes += 1
     finally:
         log_say("Stop recording", cfg.play_sounds, blocking=True)
@@ -600,3 +617,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

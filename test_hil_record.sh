@@ -3,25 +3,72 @@ set -euo pipefail
 
 lerobot-setup-can --mode=setup --interfaces=can_left,can_back_left,can_right,can_back_right
 
-PROMPT="hang clothes on the hanger"
-DAY_FOLDER="$(date +%m%d)"
-PROMPT_SLUG="$(printf '%s' "$PROMPT" | tr '[:upper:]' '[:lower:]' | sed 's/[^[:alnum:]]\+/_/g; s/^_//; s/_$//')"
-DATASET_BASE_DIR="${HOME}/evorl_dataset/${DAY_FOLDER}"
-DATASET_NAME="${PROMPT_SLUG}"
-DATASET_ROOT="${DATASET_BASE_DIR}/${DATASET_NAME}"
-DATASET_REPO_ID="ACE_ROBOTICS/eval_${DAY_FOLDER}_${DATASET_NAME}"
+# PROMPT="prompt"
+# PROMPT="hang clothes on the hanger"
+PROMPT="fold clothes"
 
-mkdir -p "${DATASET_BASE_DIR}"
+# POLICY_NAME="pi0"
+POLICY_NAME="ace_policy"
 
-SUFFIX=1
-while [ -e "${DATASET_ROOT}" ]; do
-  DATASET_NAME="${PROMPT_SLUG}_${SUFFIX}"
-  DATASET_ROOT="${DATASET_BASE_DIR}/${DATASET_NAME}"
-  DATASET_REPO_ID="ACE_ROBOTICS/eval_${DAY_FOLDER}_${DATASET_NAME}"
-  SUFFIX=$((SUFFIX + 1))
+TAG="v2_load"
+TESTMODE="false"
+
+for arg in "$@"; do
+  case "$arg" in
+    tag=*)
+      TAG="${arg#tag=}"
+      ;;
+    --tag=*)
+      TAG="${arg#--tag=}"
+      ;;
+    testmode=*)
+      TESTMODE="${arg#testmode=}"
+      ;;
+    --testmode=*)
+      TESTMODE="${arg#--testmode=}"
+      ;;
+    *)
+      echo "Unknown argument: ${arg}" >&2
+      echo "Usage: $0 [tag=<value>] [testmode=true|false]" >&2
+      exit 1
+      ;;
+  esac
 done
 
+TESTMODE="$(printf '%s' "${TESTMODE}" | tr '[:upper:]' '[:lower:]')"
+if [ "${TESTMODE}" != "true" ] && [ "${TESTMODE}" != "false" ]; then
+  echo "Invalid testmode: ${TESTMODE}. Use true or false." >&2
+  exit 1
+fi
+
+DAY_FOLDER="$(date +%m%d)"
+PROMPT_SLUG="$(printf '%s' "$PROMPT" | tr '[:upper:]' '[:lower:]' | sed 's/[^[:alnum:]]\+/_/g; s/^_//; s/_$//')"
+TAG_SLUG="$(printf '%s' "$TAG" | tr '[:upper:]' '[:lower:]' | sed 's/[^[:alnum:]]\+/_/g; s/^_//; s/_$//')"
+
+DATASET_NAME="${PROMPT_SLUG}"
+if [ -n "${TAG_SLUG}" ]; then
+  DATASET_NAME="${PROMPT_SLUG}_${TAG_SLUG}"
+fi
+
+if [ "${TESTMODE}" = "true" ]; then
+  DATASET_BASE_DIR="${TMPDIR:-/tmp}/evorl_dataset_testmode/${POLICY_NAME}/${DAY_FOLDER}"
+  DATASET_ROOT="${DATASET_BASE_DIR}/${DATASET_NAME}"
+  trap 'rm -rf "${DATASET_ROOT}"' EXIT
+else
+  DATASET_BASE_DIR="${HOME}/evorl_dataset/${POLICY_NAME}/${DAY_FOLDER}"
+  DATASET_ROOT="${DATASET_BASE_DIR}/${DATASET_NAME}"
+fi
+
+DATASET_REPO_ID="ACE_ROBOTICS/${POLICY_NAME}_${DAY_FOLDER}_${DATASET_NAME}"
+mkdir -p "${DATASET_ROOT}"
+
 echo "Saving dataset to: ${DATASET_ROOT}"
+if [ -n "${TAG}" ]; then
+  echo "Recording tag: ${TAG}"
+fi
+if [ "${TESTMODE}" = "true" ]; then
+  echo "Test mode enabled: this run will not persist any saved data."
+fi
 
 args=(
   --robot.type=bi_piper_follower
@@ -42,18 +89,19 @@ args=(
   --dataset.repo_id="${DATASET_REPO_ID}"
   --dataset.root="${DATASET_ROOT}"
   --dataset.single_task="${PROMPT}"
-  --dataset.num_episodes=2
+  --dataset.num_episodes=20
   --dataset.episode_time_s=200
-  --dataset.reset_time_s=0
   --dataset.push_to_hub=false
   --display_data=true
   --play_sounds=false
-  --policy.policy_name=pi0
+  --test_mode="${TESTMODE}"
+  --policy.policy_name="${POLICY_NAME}"
   --policy.host=103.237.28.254
-  --policy.port=1888
+  --policy.port=10888
   --policy.chunk_size=50
   --policy.n_action_steps=36
 )
 
 lerobot-human-inloop-record "${args[@]}"
+
 

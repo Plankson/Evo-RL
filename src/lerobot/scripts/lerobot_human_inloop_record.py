@@ -165,7 +165,8 @@ def human_inloop_record(cfg: RecordConfig):
     cfg.policy_sync_to_teleop = cfg.policy is not None
     cfg.intervention_state_machine_enabled = cfg.policy is not None
     cfg.enable_episode_outcome_labeling = True
-    cfg.default_episode_success = "failure"
+    cfg.default_episode_success = None
+    cfg.require_episode_success_label = True
     cfg.enable_collector_policy_id = True
     if cfg.collector_policy_id_policy is None:
         cfg.collector_policy_id_policy = infer_collector_policy_version(cfg.policy)
@@ -199,4 +200,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
