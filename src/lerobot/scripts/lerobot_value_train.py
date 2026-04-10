@@ -84,7 +84,10 @@ def value_train(
     if accelerator is None:
         from accelerate.utils import DistributedDataParallelKwargs
 
-        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=False)
+        # Value model can skip grads for some parameters (e.g., modality-specific
+        # blocks depending on dataset), so keep unused parameter detection on to
+        # avoid DDP reduction errors.
+        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
         force_cpu = cfg.value.device == "cpu"
         accelerator = Accelerator(
             step_scheduler_with_optimizer=False,

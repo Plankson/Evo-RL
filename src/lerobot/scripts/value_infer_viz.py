@@ -12,6 +12,107 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.video_utils import decode_video_frames, encode_video_frames
 
 
+def _get_primary_dataset(dataset: LeRobotDataset) -> LeRobotDataset:
+    datasets_ = getattr(dataset, "_datasets", None)
+    if isinstance(datasets_, list) and len(datasets_) > 0:
+        return datasets_[0]
+    return dataset
+
+
+def _get_dataset_fps(dataset: LeRobotDataset) -> int:
+    fps = getattr(dataset, "fps", None)
+    if fps is None:
+        fps = getattr(dataset.meta, "fps", None)
+    if fps is None:
+        fps = getattr(_get_primary_dataset(dataset), "fps", None)
+    if fps is None:
+        raise AttributeError("Could not resolve dataset fps for visualization export.")
+    return int(fps)
+
+
+def _get_dataset_root(dataset: LeRobotDataset) -> Path:
+    root = getattr(dataset, "root", None)
+    if root is None:
+        root = getattr(_get_primary_dataset(dataset), "root", None)
+    if root is None:
+        raise AttributeError("Could not resolve dataset root for visualization export.")
+    return Path(root)
+
+
+def _get_dataset_repo_id(dataset: LeRobotDataset) -> str:
+    repo_id = getattr(dataset, "repo_id", None)
+    if repo_id is not None:
+        return str(repo_id)
+    repo_ids = getattr(dataset, "repo_ids", None)
+    if isinstance(repo_ids, list) and len(repo_ids) > 0:
+        return str(repo_ids[0])
+    primary_repo_id = getattr(_get_primary_dataset(dataset), "repo_id", None)
+    if primary_repo_id is not None:
+        return str(primary_repo_id)
+    raise AttributeError("Could not resolve dataset repo_id for visualization export.")
+
+
+def _get_selected_episodes(dataset: LeRobotDataset) -> list[int] | None:
+    episodes = getattr(dataset, "episodes", None)
+    if episodes is not None:
+        return list(episodes)
+    primary_episodes = getattr(_get_primary_dataset(dataset), "episodes", None)
+    if primary_episodes is not None:
+        return list(primary_episodes)
+    return None
+
+
+def _get_tolerance_s(dataset: LeRobotDataset) -> float:
+    tolerance_s = getattr(dataset, "tolerance_s", None)
+    if tolerance_s is None:
+        tolerance_s = getattr(_get_primary_dataset(dataset), "tolerance_s", None)
+    if tolerance_s is None:
+        return 1e-4
+    return float(tolerance_s)
+
+
+def _get_video_backend(dataset: LeRobotDataset) -> str | None:
+    backend = getattr(dataset, "video_backend", None)
+    if backend is None:
+        backend = getattr(_get_primary_dataset(dataset), "video_backend", None)
+    return backend
+
+
+def _resolve_storage_video_key(dataset: LeRobotDataset, video_key: str) -> str:
+    candidates = [video_key]
+    prefix = "observation.images."
+    if video_key.startswith(prefix):
+        candidates.append(video_key[len(prefix) :])
+
+    metas = [getattr(dataset, "meta", None), getattr(_get_primary_dataset(dataset), "meta", None)]
+    for meta in metas:
+        video_keys = getattr(meta, "video_keys", None)
+        if isinstance(video_keys, list):
+            for candidate in candidates:
+                if candidate in video_keys:
+                    return candidate
+    return candidates[-1]
+
+
+def _get_video_file_path(dataset: LeRobotDataset, episode_index: int, video_key: str) -> Path:
+    storage_video_key = _resolve_storage_video_key(dataset, video_key)
+
+    meta = getattr(dataset, "meta", None)
+    get_path = getattr(meta, "get_video_file_path", None)
+    if callable(get_path):
+        try:
+            return Path(get_path(episode_index, storage_video_key))
+        except KeyError:
+            pass
+
+    primary_meta = getattr(_get_primary_dataset(dataset), "meta", None)
+    get_primary_path = getattr(primary_meta, "get_video_file_path", None)
+    if callable(get_primary_path):
+        return Path(get_primary_path(episode_index, storage_video_key))
+
+    raise AttributeError("Could not resolve get_video_file_path from dataset metadata.")
+
+
 def _smooth_1d(arr: np.ndarray, window: int = 1) -> np.ndarray:
     """Savitzky-Golay smoothing for 1-D array. Use window=1 to disable."""
     if window <= 1 or arr.shape[0] < 5:
@@ -300,28 +401,34 @@ def _get_episode_video_time_bounds(
     episode_index: int,
     video_key: str,
 ) -> tuple[float, float | None]:
-    episodes = getattr(dataset.meta, "episodes", None)
-    if episodes is None:
-        return 0.0, None
-    episodes_ds = episodes.with_format(None)
-    if "episode_index" not in episodes_ds.column_names:
-        return 0.0, None
+    storage_video_key = _resolve_storage_video_key(dataset, video_key)
+    metas = [getattr(dataset, "meta", None), getattr(_get_primary_dataset(dataset), "meta", None)]
 
-    episode_indices = np.asarray(episodes_ds["episode_index"], dtype=np.int64).reshape(-1)
-    matched = np.flatnonzero(episode_indices == episode_index)
-    if matched.size == 0:
-        return 0.0, None
-    row = int(matched[0])
+    for meta in metas:
+        episodes = getattr(meta, "episodes", None)
+        if episodes is None:
+            continue
+        episodes_ds = episodes.with_format(None)
+        if "episode_index" not in episodes_ds.column_names:
+            continue
 
-    from_col = f"videos/{video_key}/from_timestamp"
-    to_col = f"videos/{video_key}/to_timestamp"
-    from_ts = 0.0
-    to_ts: float | None = None
-    if from_col in episodes_ds.column_names:
-        from_ts = float(episodes_ds[from_col][row])
-    if to_col in episodes_ds.column_names:
-        to_ts = float(episodes_ds[to_col][row])
-    return from_ts, to_ts
+        episode_indices = np.asarray(episodes_ds["episode_index"], dtype=np.int64).reshape(-1)
+        matched = np.flatnonzero(episode_indices == episode_index)
+        if matched.size == 0:
+            continue
+        row = int(matched[0])
+
+        from_col = f"videos/{storage_video_key}/from_timestamp"
+        to_col = f"videos/{storage_video_key}/to_timestamp"
+        from_ts = 0.0
+        to_ts: float | None = None
+        if from_col in episodes_ds.column_names:
+            from_ts = float(episodes_ds[from_col][row])
+        if to_col in episodes_ds.column_names:
+            to_ts = float(episodes_ds[to_col][row])
+        return from_ts, to_ts
+
+    return 0.0, None
 
 
 def _get_video_encode_options(vcodec: str) -> tuple[dict[str, str], str]:
@@ -587,10 +694,11 @@ def _export_overlay_videos(
     if "timestamp" in column_names:
         timestamps_all = np.asarray(raw_dataset["timestamp"], dtype=np.float64).reshape(-1)
     else:
-        timestamps_all = frame_indices_all.astype(np.float64) / float(dataset.fps)
+        timestamps_all = frame_indices_all.astype(np.float64) / float(_get_dataset_fps(dataset))
 
-    if dataset.episodes is not None:
-        available_episodes = sorted(dataset.episodes)
+    selected_episodes = _get_selected_episodes(dataset)
+    if selected_episodes is not None:
+        available_episodes = sorted(selected_episodes)
     else:
         available_episodes = list(range(dataset.meta.total_episodes))
 
@@ -602,9 +710,11 @@ def _export_overlay_videos(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    fps = int(dataset.fps)
-    tolerance_s = float(getattr(dataset, "tolerance_s", 1e-4))
-    video_backend = getattr(dataset, "video_backend", None)
+    fps = _get_dataset_fps(dataset)
+    tolerance_s = _get_tolerance_s(dataset)
+    video_backend = _get_video_backend(dataset)
+    dataset_root = _get_dataset_root(dataset)
+    dataset_repo_id = _get_dataset_repo_id(dataset)
     written_paths: list[Path] = []
 
     if multiview_mode:
@@ -626,7 +736,7 @@ def _export_overlay_videos(
             src_paths: list[Path] = []
             ts_per_cam: list[np.ndarray] = []
             for cam_key in selected_video_keys:
-                src_path = Path(dataset.root) / dataset.meta.get_video_file_path(ep, cam_key)
+                src_path = dataset_root / _get_video_file_path(dataset, ep, cam_key)
                 src_paths.append(src_path)
                 from_ts, to_ts = _get_episode_video_time_bounds(dataset, ep, cam_key)
                 cam_ts = from_ts + ep_timestamps
@@ -636,7 +746,7 @@ def _export_overlay_videos(
 
             dst_path = _build_output_video_path_multiview(
                 output_dir=output_dir,
-                repo_id=dataset.repo_id,
+                repo_id=dataset_repo_id,
                 video_keys=selected_video_keys,
                 episode_index=ep,
             )
@@ -699,11 +809,11 @@ def _export_overlay_videos(
             if to_ts is not None:
                 ep_video_timestamps = np.minimum(ep_video_timestamps, to_ts)
 
-            dst_path = _build_output_video_path(output_dir, dataset.repo_id, selected_video_key, ep)
+            dst_path = _build_output_video_path(output_dir, dataset_repo_id, selected_video_key, ep)
             if dst_path.exists() and not overwrite:
                 continue
 
-            src_path = Path(dataset.root) / dataset.meta.get_video_file_path(ep, selected_video_key)
+            src_path = dataset_root / _get_video_file_path(dataset, ep, selected_video_key)
             tasks.append(
                 (
                     src_path,

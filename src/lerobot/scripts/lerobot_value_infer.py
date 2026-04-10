@@ -33,6 +33,7 @@ from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.value import ValueInferencePipelineConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.value_training_dataset import ValueTrainingLeRobotDataset
 from lerobot.datasets.utils import load_info, write_info
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.scripts.value_infer_viz import (
@@ -51,6 +52,12 @@ from lerobot.values.pistar06.configuration_pistar06 import Pistar06Config
 from lerobot.values.pistar06.modeling_pistar06 import (
     EpisodeTargetInfo,
     compute_normalized_value_targets,
+)
+from lerobot.utils.constants import (
+    OBS_STATE,
+    RAW_CAMERA_KEYS,
+    STATE_GRIPPER_KEY,
+    STATE_JOINTS_KEY,
 )
 
 
@@ -145,7 +152,16 @@ def _load_dataset_distributed(cfg: ValueInferencePipelineConfig, accelerator: Ac
     accelerator.wait_for_everyone()
     if not accelerator.is_main_process:
         dataset = LeRobotDataset(**dataset_kwargs)
-    return dataset
+    return ValueTrainingLeRobotDataset([dataset], repo_ids=[cfg.dataset.repo_id])
+
+
+def _resolve_dataset_root_for_write(dataset: LeRobotDataset, cfg: ValueInferencePipelineConfig) -> Path:
+    dataset_root = getattr(dataset, "root", None)
+    if dataset_root is not None:
+        return Path(dataset_root)
+    if cfg.dataset.root is not None:
+        return Path(cfg.dataset.root)
+    return Path(cfg.dataset.repo_id)
 
 
 def _init_runtime(
@@ -663,14 +679,15 @@ def run_value_inference_pipeline(
             feature_infos[cfg.acp.advantage_field] = {"dtype": "float32", "shape": (1,), "names": None}
             feature_infos[cfg.acp.indicator_field] = {"dtype": "int64", "shape": (1,), "names": None}
 
+        dataset_root = _resolve_dataset_root_for_write(dataset, cfg)
         _write_columns_in_place(
-            dataset_root=Path(dataset.root),
+            dataset_root=dataset_root,
             absolute_indices=absolute_indices,
             columns=columns,
             feature_infos=feature_infos,
         )
 
-        logging.info("Wrote value annotations to dataset root: %s", dataset.root)
+        logging.info("Wrote value annotations to dataset root: %s", dataset_root)
 
         # Sync computed columns into the in-memory hf_dataset so viz can read them
         for field, values in columns.items():
