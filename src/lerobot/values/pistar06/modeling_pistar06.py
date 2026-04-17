@@ -99,7 +99,7 @@ def compute_normalized_value_targets(
     if c_fail_coef < 0:
         raise ValueError("'c_fail_coef' must be non-negative.")
 
-    open_only_delta = 0.2
+    ck_only_delta = 0.5
     targets = np.zeros(episode_indices.shape[0], dtype=np.float32)
     for i in range(episode_indices.shape[0]):
         ep_idx = int(episode_indices[i])
@@ -121,7 +121,7 @@ def compute_normalized_value_targets(
         denom = float(task_max) + c_fail
         g_norm = g / denom
         if ep.open_only:
-            g_norm -= open_only_delta
+            g_norm -= ck_only_delta
         targets[i] = np.clip(g_norm, clip_min, clip_max)
 
     return targets

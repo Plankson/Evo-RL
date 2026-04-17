@@ -21,7 +21,7 @@ ace_fold_cloth_v2 = [
     "/data/dataset/data_fold_cloth__wd_zd_0112_lerobot",
 ]
 
-ace_fold_cloth_open_only = [
+ace_fold_cloth_ck_only = [
     "/data/dataset/data_fold_cloth__zql_ck_0112_lerobot_filter",
     "/data/dataset/data_fold_cloth_zql_0104_1_lerobot_filter",
     "/data/dataset/data_fold_cloth_zql_0104_2_lerobot_filter",
