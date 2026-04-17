@@ -33,7 +33,7 @@ from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.value import ValueInferencePipelineConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.data_constant import ace_fold_cloth_open_only
+from lerobot.datasets.data_constant import ace_fold_cloth_ck_only
 from lerobot.datasets.value_training_dataset import ValueTrainingLeRobotDataset
 from lerobot.datasets.utils import load_info, write_info
 from lerobot.policies.factory import make_policy, make_pre_post_processors
@@ -211,7 +211,7 @@ def _build_episode_info(
     episodes = episodes_ds[:]
     n_episodes = len(episodes_ds)
     has_success = success_field in episodes_ds.column_names
-    open_only_repo_ids = set(ace_fold_cloth_open_only)
+    ck_only_repo_ids = set(ace_fold_cloth_ck_only)
 
     episode_info: dict[int, EpisodeTargetInfo] = {}
     task_max_length: dict[int, int] = {}
@@ -238,7 +238,7 @@ def _build_episode_info(
             task_index=task_index,
             length=ep_length,
             success=ep_success,
-            open_only=repo_id in open_only_repo_ids,
+            ck_only=repo_id in ck_only_repo_ids,
         )
         task_max_length[task_index] = max(task_max_length.get(task_index, 0), ep_length)
     return episode_info, task_max_length

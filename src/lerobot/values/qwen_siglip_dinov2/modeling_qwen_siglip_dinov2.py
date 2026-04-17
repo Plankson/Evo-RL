@@ -603,7 +603,7 @@ class QwenSiglipDinov2Policy(PreTrainedPolicy):
                 task_index=task_index,
                 length=ep_length,
                 success=ep_success,
-                open_only=repo_id in open_only_repo_ids,
+                ck_only=repo_id in open_only_repo_ids,
             )
             task_max_length[task_index] = max(task_max_length.get(task_index, 0), ep_length)
 

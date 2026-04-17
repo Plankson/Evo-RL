@@ -45,7 +45,7 @@ class EpisodeTargetInfo:
     task_index: int
     length: int
     success: bool
-    open_only: bool = False
+    ck_only: bool = False
 
 
 def build_bin_centers(
@@ -120,7 +120,7 @@ def compute_normalized_value_targets(
 
         denom = float(task_max) + c_fail
         g_norm = g / denom
-        if ep.open_only:
+        if ep.ck_only:
             g_norm -= ck_only_delta
         targets[i] = np.clip(g_norm, clip_min, clip_max)
 
@@ -821,7 +821,7 @@ class Pistar06Policy(PreTrainedPolicy):
                 task_index=task_index,
                 length=ep_length,
                 success=ep_success,
-                open_only=repo_id in open_only_repo_ids,
+                ck_only=repo_id in open_only_repo_ids,
             )
             task_max_length[task_index] = max(task_max_length.get(task_index, 0), ep_length)
 

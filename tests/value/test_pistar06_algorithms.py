@@ -36,7 +36,7 @@ def test_compute_normalized_value_targets_applies_open_only_offset():
     episode_indices = np.array([0, 0, 0], dtype=np.int64)
     frame_indices = np.array([0, 1, 2], dtype=np.int64)
     episode_info = {
-        0: EpisodeTargetInfo(episode_index=0, task_index=0, length=3, success=True, open_only=True),
+        0: EpisodeTargetInfo(episode_index=0, task_index=0, length=3, success=True, ck_only=True),
     }
     task_max_lengths = {0: 3}
 
