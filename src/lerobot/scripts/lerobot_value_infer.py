@@ -33,6 +33,7 @@ from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.value import ValueInferencePipelineConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.data_constant import ace_fold_cloth_open_only
 from lerobot.datasets.value_training_dataset import ValueTrainingLeRobotDataset
 from lerobot.datasets.utils import load_info, write_info
 from lerobot.policies.factory import make_policy, make_pre_post_processors
@@ -48,6 +49,7 @@ from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.recording_annotations import EPISODE_SUCCESS, resolve_episode_success_label
 from lerobot.utils.utils import init_logging, inside_slurm
+from lerobot.values.ace_value.configuration_ace_value import AceValueConfig
 from lerobot.values.pistar06.configuration_pistar06 import Pistar06Config
 from lerobot.values.pistar06.modeling_pistar06 import (
     EpisodeTargetInfo,
@@ -138,13 +140,18 @@ def _resolve_pretrained_model_dir(checkpoint_path: str, checkpoint_ref: str) -> 
     )
 
 
-def _load_dataset_distributed(cfg: ValueInferencePipelineConfig, accelerator: Accelerator) -> LeRobotDataset:
+def _load_dataset_distributed(
+    cfg: ValueInferencePipelineConfig,
+    accelerator: Accelerator,
+    include_aligned_state: bool = True,
+) -> LeRobotDataset:
     dataset_kwargs = {
         "repo_id": cfg.dataset.repo_id,
         "root": cfg.dataset.root,
         "episodes": cfg.dataset.episodes,
         "revision": cfg.dataset.revision,
         "download_videos": cfg.dataset.download_videos,
+        "tolerance_s": cfg.dataset.tolerance_s,
     }
 
     if accelerator.is_main_process:
@@ -152,7 +159,11 @@ def _load_dataset_distributed(cfg: ValueInferencePipelineConfig, accelerator: Ac
     accelerator.wait_for_everyone()
     if not accelerator.is_main_process:
         dataset = LeRobotDataset(**dataset_kwargs)
-    return ValueTrainingLeRobotDataset([dataset], repo_ids=[cfg.dataset.repo_id])
+    return ValueTrainingLeRobotDataset(
+        [dataset],
+        repo_ids=[cfg.dataset.repo_id],
+        include_aligned_state=include_aligned_state,
+    )
 
 
 def _resolve_dataset_root_for_write(dataset: LeRobotDataset, cfg: ValueInferencePipelineConfig) -> Path:
@@ -200,6 +211,7 @@ def _build_episode_info(
     episodes = episodes_ds[:]
     n_episodes = len(episodes_ds)
     has_success = success_field in episodes_ds.column_names
+    open_only_repo_ids = set(ace_fold_cloth_open_only)
 
     episode_info: dict[int, EpisodeTargetInfo] = {}
     task_max_length: dict[int, int] = {}
@@ -219,12 +231,14 @@ def _build_episode_info(
             require_label=True,
         )
         ep_success = resolved_success == EPISODE_SUCCESS
+        repo_id = str(episodes["repo_id"][i]) if "repo_id" in episodes_ds.column_names else str(dataset.repo_id)
 
         episode_info[ep_idx] = EpisodeTargetInfo(
             episode_index=ep_idx,
             task_index=task_index,
             length=ep_length,
             success=ep_success,
+            open_only=repo_id in open_only_repo_ids,
         )
         task_max_length[task_index] = max(task_max_length.get(task_index, 0), ep_length)
     return episode_info, task_max_length
@@ -419,9 +433,9 @@ def _load_value_policy_and_processors(
     device: torch.device,
 ):
     value_cfg = PreTrainedConfig.from_pretrained(pretrained_dir)
-    if not isinstance(value_cfg, Pistar06Config):
+    if not isinstance(value_cfg, (AceValueConfig, Pistar06Config)):
         raise ValueError(
-            f"Unsupported value config type '{type(value_cfg)}'. lerobot-value-infer currently supports only 'pistar06'."
+            f"Unsupported value config type '{type(value_cfg)}'. lerobot-value-infer currently supports only 'ace_value' and 'pistar06'."
         )
 
     value_cfg.pretrained_path = pretrained_dir
@@ -474,7 +488,18 @@ def run_value_inference_pipeline(
     accelerator = _create_accelerator(cfg, accelerator)
     output_dir, device = _init_runtime(cfg, accelerator)
 
-    dataset = _load_dataset_distributed(cfg, accelerator)
+    pretrained_dir: Path | None = None
+    include_aligned_state = True
+    if cfg.acp.enable:
+        pretrained_dir = _resolve_pretrained_model_dir(
+            checkpoint_path=cfg.inference.checkpoint_path,
+            checkpoint_ref=cfg.inference.checkpoint_ref,
+        )
+        value_cfg_for_dataset = PreTrainedConfig.from_pretrained(pretrained_dir)
+        if isinstance(value_cfg_for_dataset, Pistar06Config):
+            include_aligned_state = bool(value_cfg_for_dataset.include_state_in_prompt)
+
+    dataset = _load_dataset_distributed(cfg, accelerator, include_aligned_state=include_aligned_state)
     raw_frames = dataset.hf_dataset.with_format(None)
     frame_count = len(raw_frames)
     if frame_count == 0:
@@ -518,16 +543,24 @@ def run_value_inference_pipeline(
         accelerator.end_training()
         return result
 
-    pretrained_dir = _resolve_pretrained_model_dir(
-        checkpoint_path=cfg.inference.checkpoint_path,
-        checkpoint_ref=cfg.inference.checkpoint_ref,
-    )
+    if pretrained_dir is None:
+        pretrained_dir = _resolve_pretrained_model_dir(
+            checkpoint_path=cfg.inference.checkpoint_path,
+            checkpoint_ref=cfg.inference.checkpoint_ref,
+        )
     value_policy, value_cfg, preprocessor = _load_value_policy_and_processors(
         cfg=cfg,
         dataset=dataset,
         pretrained_dir=pretrained_dir,
         device=device,
     )
+    if isinstance(value_cfg, Pistar06Config):
+        resize_shape = cfg.runtime.image_resize_shape
+        if resize_shape is None:
+            resize_shape = value_cfg.image_resize_shape
+        if hasattr(dataset, "set_image_resize_shape"):
+            resize_mode = cfg.runtime.image_resize_mode if cfg.runtime.image_resize_shape is not None else value_cfg.image_resize_mode
+            dataset.set_image_resize_shape(resize_shape, image_resize_mode=resize_mode)
 
     absolute_indices = np.asarray(raw_frames["index"], dtype=np.int64)
 
@@ -679,15 +712,17 @@ def run_value_inference_pipeline(
             feature_infos[cfg.acp.advantage_field] = {"dtype": "float32", "shape": (1,), "names": None}
             feature_infos[cfg.acp.indicator_field] = {"dtype": "int64", "shape": (1,), "names": None}
 
-        dataset_root = _resolve_dataset_root_for_write(dataset, cfg)
-        _write_columns_in_place(
-            dataset_root=dataset_root,
-            absolute_indices=absolute_indices,
-            columns=columns,
-            feature_infos=feature_infos,
-        )
-
-        logging.info("Wrote value annotations to dataset root: %s", dataset_root)
+        if cfg.runtime.write_to_dataset:
+            dataset_root = _resolve_dataset_root_for_write(dataset, cfg)
+            _write_columns_in_place(
+                dataset_root=dataset_root,
+                absolute_indices=absolute_indices,
+                columns=columns,
+                feature_infos=feature_infos,
+            )
+            logging.info("Wrote value annotations to dataset root: %s", dataset_root)
+        else:
+            logging.info("Skipped dataset writeback because runtime.write_to_dataset=false")
 
         # Sync computed columns into the in-memory hf_dataset so viz can read them
         for field, values in columns.items():
@@ -707,6 +742,7 @@ def run_value_inference_pipeline(
             "value_field": cfg.acp.value_field,
             "acp_enabled": bool(cfg.acp.enable),
             "value_inference_skipped": False,
+            "write_to_dataset": bool(cfg.runtime.write_to_dataset),
             "indicator_positive_ratio": indicator_positive_ratio,
             "thresholds": thresholds,
             "viz_outputs": viz_outputs,

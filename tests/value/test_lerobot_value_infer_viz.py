@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import contextlib
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +12,7 @@ from lerobot.configs.value import (
     ValueInferenceCheckpointConfig,
     ValueInferenceDatasetConfig,
     ValueInferencePipelineConfig,
+    ValueInferenceRuntimeConfig,
     ValueInferenceVizConfig,
 )
 from lerobot.scripts import lerobot_value_infer as value_infer, value_infer_viz
@@ -30,6 +32,15 @@ class _FakeHFDataset:
     def __getitem__(self, key: str):
         return self._data[key]
 
+    def remove_columns(self, columns: list[str]):
+        data = {k: v for k, v in self._data.items() if k not in columns}
+        return _FakeHFDataset(data)
+
+    def add_column(self, name: str, values: list):
+        data = dict(self._data)
+        data[name] = values
+        return _FakeHFDataset(data)
+
 
 class _FakeAccelerator:
     def __init__(self):
@@ -42,6 +53,18 @@ class _FakeAccelerator:
 
     def end_training(self):
         return None
+
+    def prepare(self, obj):
+        return obj
+
+    def autocast(self):
+        return contextlib.nullcontext()
+
+    def unwrap_model(self, model):
+        return model
+
+    def gather_for_metrics(self, tensor):
+        return tensor
 
 
 class _FakeMeta:
@@ -64,6 +87,7 @@ class _FakeDataset:
                 "index": [1000, 1001, 1002, 5000, 5001],
                 "episode_index": [64, 64, 64, 101, 101],
                 "frame_index": [0, 1, 2, 0, 1],
+                "task_index": [0, 0, 0, 1, 1],
                 "complementary_info.value": [-0.8, -0.7, -0.6, -0.3, -0.2],
                 "complementary_info.advantage": [0.1, 0.2, 0.3, 0.4, 0.5],
                 "complementary_info.acp_indicator": [0, 1, 1, 0, 1],
@@ -235,6 +259,84 @@ def test_acp_disabled_skips_value_inference_and_uses_default_viz_dir(monkeypatch
     assert result["value_inference_skipped"] is True
     assert result["checkpoint"] is None
     assert result["viz_outputs"] == [str(expected_viz_dir / "dummy.mp4")]
+
+
+def test_runtime_write_to_dataset_false_skips_parquet_write(monkeypatch, tmp_path: Path):
+    accelerator = _FakeAccelerator()
+    dataset = _FakeDataset()
+
+    class _FakeLoader:
+        def __init__(self, dataset, **kwargs):
+            raw = dataset.hf_dataset.with_format(None)
+            self._batches = [
+                {
+                    "index": torch.tensor(raw["index"], dtype=torch.int64),
+                    "frame_index": torch.tensor(raw["frame_index"], dtype=torch.int64),
+                }
+            ]
+
+        def __iter__(self):
+            return iter(self._batches)
+
+        def __len__(self):
+            return len(self._batches)
+
+    class _FakePolicy:
+        def eval(self):
+            return self
+
+        def predict_value(self, batch):
+            return batch["frame_index"].to(torch.float32) * 0.1
+
+    class _FakeValueCfg:
+        task_index_feature = "task_index"
+        bin_min = -1.0
+        bin_max = 1.0
+
+    def _fail_write(**kwargs):
+        raise AssertionError("dataset parquet write should be skipped when runtime.write_to_dataset=false")
+
+    monkeypatch.setattr(value_infer, "DataLoader", _FakeLoader)
+    monkeypatch.setattr(value_infer, "_create_accelerator", lambda cfg, acc: accelerator)
+    monkeypatch.setattr(
+        value_infer,
+        "_init_runtime",
+        lambda cfg, accelerator: (tmp_path / "runtime" / "value", torch.device("cpu")),
+    )
+    monkeypatch.setattr(value_infer, "_load_dataset_distributed", lambda cfg, accelerator: dataset)
+    monkeypatch.setattr(value_infer, "_resolve_pretrained_model_dir", lambda **kwargs: tmp_path / "checkpoint")
+    monkeypatch.setattr(
+        value_infer,
+        "_load_value_policy_and_processors",
+        lambda **kwargs: (_FakePolicy(), _FakeValueCfg(), lambda batch: batch),
+    )
+    monkeypatch.setattr(value_infer, "_build_episode_info", lambda **kwargs: ({}, {}))
+    monkeypatch.setattr(
+        value_infer,
+        "compute_normalized_value_targets",
+        lambda **kwargs: np.zeros(len(dataset.hf_dataset["index"]), dtype=np.float32),
+    )
+    monkeypatch.setattr(value_infer, "_write_columns_in_place", _fail_write)
+
+    cfg = ValueInferencePipelineConfig(
+        dataset=ValueInferenceDatasetConfig(repo_id="dummy/repo"),
+        inference=ValueInferenceCheckpointConfig(checkpoint_path="unused"),
+        runtime=ValueInferenceRuntimeConfig(device="cpu", batch_size=8, num_workers=0, write_to_dataset=False),
+        acp=ValueInferenceACPConfig(enable=True),
+        viz=ValueInferenceVizConfig(enable=False, episodes="all"),
+        output_dir=tmp_path / "pipeline_out",
+        job_name="no_write_test",
+    )
+
+    result = value_infer.run_value_inference_pipeline(cfg)
+
+    assert result["main_process"] is True
+    assert result["write_to_dataset"] is False
+    assert result["value_inference_skipped"] is False
+    updated = dataset.hf_dataset.with_format(None)
+    assert updated["complementary_info.value"] == [0.0, 0.1, 0.2, 0.0, 0.1]
+    assert "complementary_info.advantage" in updated.column_names
+    assert "complementary_info.acp_indicator" in updated.column_names
 
 
 def test_decode_frames_at_timestamps_scales_float_frames_to_uint8(monkeypatch, tmp_path: Path):

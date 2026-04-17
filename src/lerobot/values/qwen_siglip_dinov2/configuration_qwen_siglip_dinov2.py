@@ -9,22 +9,20 @@ from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import OBS_STATE
 
 
-@PreTrainedConfig.register_subclass("pistar06")
+@PreTrainedConfig.register_subclass("qwen_siglip_dinov2")
 @dataclass
-class Pistar06Config(PreTrainedConfig):
-    """Value model config using the Pistar06 stack (SigLIP + Gemma)."""
+class QwenSiglipDinov2Config(PreTrainedConfig):
+    """Value model using a Qwen text tower with dual SigLIP + DINOv2 vision encoders."""
 
-    # Backbone components
-    vision_repo_id: str = "google/siglip-so400m-patch14-384"
-    language_repo_id: str = "google/gemma-3-270m"
-    vision_revision: str | None = None
+    language_repo_id: str = "Qwen/Qwen2.5-0.5B-Instruct"
+    siglip_repo_id: str = "google/siglip-so400m-patch14-384"
+    dinov2_repo_id: str = "facebook/dinov2-base"
     language_revision: str | None = None
+    siglip_revision: str | None = None
+    dinov2_revision: str | None = None
 
-    # Input fields
     task_field: str = "task"
     camera_features: list[str] = field(default_factory=list)
-    image_resize_shape: tuple[int, int] | list[int] | None = None
-    image_resize_mode: str = "bilinear"
     state_feature: str = OBS_STATE
     include_state_in_prompt: bool = True
     max_state_dim: int = 32
@@ -33,27 +31,24 @@ class Pistar06Config(PreTrainedConfig):
     loss_weight_key: str = "observation.value_loss_weight"
     task_index_feature: str = "task_index"
 
-    # Tokenizer / model shape
     tokenizer_max_length: int = 200
     state_proj_dim: int = 512
     fusion_hidden_dim: int = 512
     fusion_num_layers: int = 2
     fusion_num_heads: int = 8
 
-    # Value head (distributional)
     num_bins: int = 201
     bin_min: float = -1.0
     bin_max: float = 0.0
 
-    # Runtime
     dropout: float = 0.1
     dtype: str = "float32"
-    freeze_vision_encoder: bool = False
+    freeze_siglip_encoder: bool = False
+    freeze_dinov2_encoder: bool = False
     freeze_language_model: bool = False
     use_gradient_checkpointing: bool = False
     push_to_hub: bool = False
 
-    # Training presets
     optimizer_lr: float = 5e-5
     optimizer_weight_decay: float = 1e-5
     optimizer_grad_clip_norm: float = 10.0
@@ -72,22 +67,14 @@ class Pistar06Config(PreTrainedConfig):
     def __post_init__(self) -> None:
         super().__post_init__()
 
-        if not self.vision_repo_id:
-            raise ValueError("'value.vision_repo_id' must be non-empty.")
         if not self.language_repo_id:
             raise ValueError("'value.language_repo_id' must be non-empty.")
+        if not self.siglip_repo_id:
+            raise ValueError("'value.siglip_repo_id' must be non-empty.")
+        if not self.dinov2_repo_id:
+            raise ValueError("'value.dinov2_repo_id' must be non-empty.")
         if not self.task_field:
             raise ValueError("'value.task_field' must be non-empty.")
-        if self.image_resize_shape is not None:
-            if len(self.image_resize_shape) != 2:
-                raise ValueError("'value.image_resize_shape' must contain exactly two integers.")
-            if any(int(v) <= 0 for v in self.image_resize_shape):
-                raise ValueError("'value.image_resize_shape' values must be > 0.")
-        if self.image_resize_mode not in {"nearest", "nearest-exact", "bilinear", "bicubic", "area"}:
-            raise ValueError(
-                "'value.image_resize_mode' must be one of "
-                "{'nearest', 'nearest-exact', 'bilinear', 'bicubic', 'area'}."
-            )
         if not self.state_feature:
             raise ValueError("'value.state_feature' must be non-empty.")
         if not self.state_feature.startswith("observation."):
@@ -102,7 +89,6 @@ class Pistar06Config(PreTrainedConfig):
             raise ValueError("'value.max_state_dim' must be > 0.")
         if self.state_discretization_bins < 2:
             raise ValueError("'value.state_discretization_bins' must be >= 2.")
-
         if self.tokenizer_max_length <= 0:
             raise ValueError("'value.tokenizer_max_length' must be > 0.")
         if self.state_proj_dim <= 0:
@@ -115,7 +101,6 @@ class Pistar06Config(PreTrainedConfig):
             raise ValueError("'value.fusion_num_heads' must be > 0.")
         if self.fusion_hidden_dim % self.fusion_num_heads != 0:
             raise ValueError("'value.fusion_hidden_dim' must be divisible by 'value.fusion_num_heads'.")
-
         if self.num_bins < 2:
             raise ValueError("'value.num_bins' must be >= 2.")
         if self.bin_min >= self.bin_max:
@@ -124,7 +109,6 @@ class Pistar06Config(PreTrainedConfig):
             raise ValueError("'value.dtype' must be one of {'float32', 'bfloat16'}.")
         if not 0.0 <= self.dropout < 1.0:
             raise ValueError("'value.dropout' must be within [0, 1).")
-
         if self.optimizer_lr <= 0:
             raise ValueError("'value.optimizer_lr' must be > 0.")
         if self.optimizer_weight_decay < 0:
@@ -139,8 +123,6 @@ class Pistar06Config(PreTrainedConfig):
             raise ValueError("'value.scheduler_decay_lr' must be >= 0.")
 
     def validate_features(self) -> None:
-        # Value model consumes observation + task text, and supervises with a scalar target key.
-        # The training loop injects target tensors into `target_key`.
         return
 
     def get_optimizer_preset(self) -> AdamWConfig:

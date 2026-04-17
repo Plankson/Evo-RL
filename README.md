@@ -387,9 +387,11 @@ Single-GPU template:
 ```bash
 lerobot-value-infer \
   --dataset.repo_id=<HF_USERNAME_OR_ORG>/<DATASET_NAME> \
+  --dataset.episodes=[100,101,102] \
   --inference.checkpoint_path=outputs/value_train/<RUN_NAME> \
   --runtime.device=cuda \
   --runtime.batch_size=64 \
+  --runtime.write_to_dataset=false \
   --acp.enable=true \
   --acp.n_step=50 \
   --acp.positive_ratio=0.3 \
@@ -414,6 +416,8 @@ CUDA_VISIBLE_DEVICES=<GPU_ID_LIST> accelerate launch \
 Parameter notes:
 
 ```bash
+--dataset.episodes: optional subset of episode indices to run inference on.
+--runtime.write_to_dataset=false: keep inferred value/advantage/indicator only in memory for visualization; do not write parquet.
 --acp.n_step: n-step advantage horizon.
 --acp.positive_ratio: positive label ratio after advantage binarization (e.g., 0.3 = top 30% per task).
 ```

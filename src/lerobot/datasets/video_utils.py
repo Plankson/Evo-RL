@@ -32,6 +32,8 @@ import torchvision
 from datasets.features.features import register_feature
 from PIL import Image
 
+TIMESTAMP_TOLERANCE_EPS = 1e-6
+
 
 def get_safe_default_codec():
     if importlib.util.find_spec("torchcodec"):
@@ -42,6 +44,9 @@ def get_safe_default_codec():
         )
         return "pyav"
 
+
+def _is_within_timestamp_tolerance(min_distance: torch.Tensor, tolerance_s: float) -> torch.Tensor:
+    return min_distance <= (tolerance_s + TIMESTAMP_TOLERANCE_EPS)
 
 def decode_video_frames(
     video_path: Path | str,
@@ -145,7 +150,7 @@ def decode_video_frames_torchvision(
     dist = torch.cdist(query_ts[:, None], loaded_ts[:, None], p=1)
     min_, argmin_ = dist.min(1)
 
-    is_within_tol = min_ < tolerance_s
+    is_within_tol = _is_within_timestamp_tolerance(min_, tolerance_s)
     assert is_within_tol.all(), (
         f"One or several query timestamps unexpectedly violate the tolerance ({min_[~is_within_tol]} > {tolerance_s=})."
         "It means that the closest frame that can be loaded from the video is too far away in time."
@@ -271,7 +276,7 @@ def decode_video_frames_torchcodec(
     dist = torch.cdist(query_ts[:, None], loaded_ts[:, None], p=1)
     min_, argmin_ = dist.min(1)
 
-    is_within_tol = min_ < tolerance_s
+    is_within_tol = _is_within_timestamp_tolerance(min_, tolerance_s)
     assert is_within_tol.all(), (
         f"One or several query timestamps unexpectedly violate the tolerance ({min_[~is_within_tol]} > {tolerance_s=})."
         "It means that the closest frame that can be loaded from the video is too far away in time."

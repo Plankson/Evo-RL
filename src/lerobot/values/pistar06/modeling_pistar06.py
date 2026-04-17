@@ -21,6 +21,7 @@ from torch import Tensor, nn
 
 from lerobot.policies.pretrained import ActionSelectKwargs, PreTrainedPolicy
 from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
+from lerobot.datasets.data_constant import ace_fold_cloth_open_only
 from lerobot.utils.import_utils import _transformers_available
 from lerobot.utils.recording_annotations import EPISODE_SUCCESS, resolve_episode_success_label
 from lerobot.values.pistar06.configuration_pistar06 import Pistar06Config
@@ -44,6 +45,7 @@ class EpisodeTargetInfo:
     task_index: int
     length: int
     success: bool
+    open_only: bool = False
 
 
 def build_bin_centers(
@@ -97,6 +99,7 @@ def compute_normalized_value_targets(
     if c_fail_coef < 0:
         raise ValueError("'c_fail_coef' must be non-negative.")
 
+    open_only_delta = 0.2
     targets = np.zeros(episode_indices.shape[0], dtype=np.float32)
     for i in range(episode_indices.shape[0]):
         ep_idx = int(episode_indices[i])
@@ -117,6 +120,8 @@ def compute_normalized_value_targets(
 
         denom = float(task_max) + c_fail
         g_norm = g / denom
+        if ep.open_only:
+            g_norm -= open_only_delta
         targets[i] = np.clip(g_norm, clip_min, clip_max)
 
     return targets
@@ -789,6 +794,7 @@ class Pistar06Policy(PreTrainedPolicy):
         episodes = episodes_ds[:]
         n_episodes = len(episodes_ds)
         has_success = targets_cfg.success_field in episodes_ds.column_names
+        open_only_repo_ids = set(ace_fold_cloth_open_only)
 
         episode_info: dict[int, EpisodeTargetInfo] = {}
         task_max_length: dict[int, int] = {}
@@ -808,12 +814,14 @@ class Pistar06Policy(PreTrainedPolicy):
                 require_label=True,
             )
             ep_success = resolved_success == EPISODE_SUCCESS
+            repo_id = str(episodes["repo_id"][i]) if "repo_id" in episodes_ds.column_names else str(dataset.repo_id)
 
             episode_info[ep_idx] = EpisodeTargetInfo(
                 episode_index=ep_idx,
                 task_index=task_index,
                 length=ep_length,
                 success=ep_success,
+                open_only=repo_id in open_only_repo_ids,
             )
             task_max_length[task_index] = max(task_max_length.get(task_index, 0), ep_length)
 

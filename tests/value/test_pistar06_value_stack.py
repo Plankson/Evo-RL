@@ -24,6 +24,7 @@ from lerobot.values.pistar06.modeling_pistar06 import (
 from lerobot.values.pistar06.processor_pistar06 import (
     PISTAR06_IMAGE_MASK_KEY,
     PISTAR06_IMAGES_KEY,
+    Pistar06PrepareImagesProcessorStep,
     Pistar06PrepareTaskPromptProcessorStep,
     make_pistar06_pre_post_processors,
 )
@@ -417,6 +418,146 @@ def test_pistar06_processor_pads_missing_cameras_and_tokenizes(hf_stubs):
     assert processed[PISTAR06_IMAGES_KEY].shape == (2, 2, 3, 48, 40)
     assert torch.equal(processed[PISTAR06_IMAGE_MASK_KEY][:, 0], torch.ones(2, dtype=torch.bool))
     assert torch.equal(processed[PISTAR06_IMAGE_MASK_KEY][:, 1], torch.zeros(2, dtype=torch.bool))
+
+
+def test_pistar06_prepare_images_requires_matching_shapes_without_resize():
+    step = Pistar06PrepareImagesProcessorStep(
+        camera_features=["observation.images.front", "observation.images.wrist"],
+    )
+
+    observation = {
+        "observation.images.front": torch.rand(2, 3, 480, 848),
+        "observation.images.wrist": torch.rand(2, 3, 512, 512),
+    }
+
+    with pytest.raises(ValueError, match="same \\[C,H,W\\] shape"):
+        step._prepare_images(observation)
+
+
+def test_pistar06_prepare_images_can_resize_mismatched_cameras():
+    step = Pistar06PrepareImagesProcessorStep(
+        camera_features=["observation.images.front", "observation.images.wrist"],
+        resize_shape=(480, 640),
+    )
+
+    observation = {
+        "observation.images.front": torch.rand(2, 3, 480, 848),
+        "observation.images.wrist": torch.rand(2, 3, 512, 512),
+    }
+
+    images, image_mask = step._prepare_images(observation)
+
+    assert images.shape == (2, 2, 3, 480, 640)
+    assert torch.equal(image_mask, torch.ones(2, 2, dtype=torch.bool))
+
+
+def test_value_training_dataset_resizes_images_in_getitem():
+    features = {
+        "global_image": {"dtype": "image", "shape": (3, 4, 4)},
+        "left_image": {"dtype": "image", "shape": (3, 4, 4)},
+        "right_image": {"dtype": "image", "shape": (3, 4, 4)},
+    }
+    stats = {
+        "global_image": _make_fake_stats((3, 1, 1)),
+        "left_image": _make_fake_stats((3, 1, 1)),
+        "right_image": _make_fake_stats((3, 1, 1)),
+        "state.joints": _make_fake_stats(12),
+        "state.gripper_w": _make_fake_stats(2),
+    }
+    ds = _FakeLeRobotDataset(
+        "ds_resize",
+        items=[
+            {
+                "index": torch.tensor(0),
+                "frame_index": torch.tensor(0),
+                "episode_index": torch.tensor(0),
+                "task_index": torch.tensor(0),
+                "task": "fold clothes",
+                "global_image": torch.ones(3, 480, 848),
+                "left_image": 2 * torch.ones(3, 512, 512),
+                "right_image": 3 * torch.ones(3, 360, 640),
+                "state.joints": torch.arange(1.0, 13.0),
+                "state.gripper_w": torch.tensor([13.0, 14.0]),
+            },
+        ],
+        features=features,
+        stats=stats,
+        task_names=["fold clothes"],
+    )
+
+    dataset = ValueTrainingLeRobotDataset(
+        [ds],
+        repo_ids=["ds_resize"],
+        image_resize_shape=(480, 640),
+    )
+    sample = dataset[0]
+
+    assert sample["observation.images.global_image"].shape == (3, 480, 640)
+    assert sample["observation.images.left_image"].shape == (3, 480, 640)
+    assert sample["observation.images.right_image"].shape == (3, 480, 640)
+
+
+def test_value_training_dataset_can_skip_aligned_state():
+    features = {
+        "global_image": {"dtype": "image", "shape": (3, 4, 4)},
+        "left_image": {"dtype": "image", "shape": (3, 4, 4)},
+        "right_image": {"dtype": "image", "shape": (3, 4, 4)},
+    }
+    stats = {
+        "global_image": _make_fake_stats((3, 1, 1)),
+        "left_image": _make_fake_stats((3, 1, 1)),
+        "right_image": _make_fake_stats((3, 1, 1)),
+    }
+    ds = _FakeLeRobotDataset(
+        "ds_no_state",
+        items=[
+            {
+                "index": torch.tensor(0),
+                "frame_index": torch.tensor(0),
+                "episode_index": torch.tensor(0),
+                "task_index": torch.tensor(0),
+                "task": "fold clothes",
+                "global_image": torch.ones(3, 4, 4),
+                "left_image": 2 * torch.ones(3, 4, 4),
+                "right_image": 3 * torch.ones(3, 4, 4),
+            },
+        ],
+        features=features,
+        stats=stats,
+        task_names=["fold clothes"],
+    )
+
+    dataset = ValueTrainingLeRobotDataset(
+        [ds],
+        repo_ids=["ds_no_state"],
+        include_aligned_state=False,
+    )
+    sample = dataset[0]
+
+    assert OBS_STATE not in sample
+    assert OBS_STATE not in dataset.meta.features
+    assert OBS_STATE not in dataset.meta.stats
+
+
+def test_pistar06_processor_uses_config_image_resize_shape(hf_stubs):
+    del hf_stubs
+    cfg = Pistar06Config(
+        device="cpu",
+        camera_features=["observation.images.front", "observation.images.wrist"],
+        image_resize_shape=(480, 640),
+    )
+    preprocessor, _ = make_pistar06_pre_post_processors(cfg)
+
+    raw_batch = {
+        "task": ["pick bottle", "place bottle"],
+        OBS_STATE: torch.rand(2, 12),
+        "observation.images.front": torch.rand(2, 3, 480, 848),
+        "observation.images.wrist": torch.rand(2, 3, 512, 512),
+    }
+    processed = preprocessor(raw_batch)
+
+    assert processed[PISTAR06_IMAGES_KEY].shape == (2, 2, 3, 480, 640)
+    assert torch.equal(processed[PISTAR06_IMAGE_MASK_KEY], torch.ones(2, 2, dtype=torch.bool))
 
 
 def test_pistar06_processor_requires_task_field(hf_stubs):

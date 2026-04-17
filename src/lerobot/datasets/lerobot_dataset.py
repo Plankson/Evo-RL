@@ -1062,40 +1062,61 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx) -> dict:
         # Ensure dataset is loaded when we actually need to read from it
         self._ensure_hf_dataset_loaded()
-        item = self.hf_dataset[idx]
-        ep_idx = item["episode_index"].item()
-        # Use the absolute index from the dataset for delta timestamp calculations
-        abs_idx = item["index"].item()
 
-        query_indices = None
-        if self.delta_indices is not None:
-            query_indices, padding = self._get_query_indices(abs_idx, ep_idx)
-            query_result = self._query_hf_dataset(query_indices)
-            item = {**item, **padding}
-            for key, val in query_result.items():
-                item[key] = val
+        last_video_error = None
+        for retry_offset in range(len(self)):
+            current_idx = (idx + retry_offset) % len(self)
+            item = self.hf_dataset[current_idx]
+            ep_idx = item["episode_index"].item()
+            # Use the absolute index from the dataset for delta timestamp calculations
+            abs_idx = item["index"].item()
 
-        if len(self.meta.video_keys) > 0:
-            current_ts = item["timestamp"].item()
-            query_timestamps = self._get_query_timestamps(current_ts, query_indices)
-            video_frames = self._query_videos(query_timestamps, ep_idx)
-            item = {**video_frames, **item}
+            query_indices = None
+            if self.delta_indices is not None:
+                query_indices, padding = self._get_query_indices(abs_idx, ep_idx)
+                query_result = self._query_hf_dataset(query_indices)
+                item = {**item, **padding}
+                for key, val in query_result.items():
+                    item[key] = val
 
-        if self.image_transforms is not None:
-            image_keys = self.meta.camera_keys
-            for cam in image_keys:
-                item[cam] = self.image_transforms(item[cam])
+            if len(self.meta.video_keys) > 0:
+                current_ts = item["timestamp"].item()
+                query_timestamps = self._get_query_timestamps(current_ts, query_indices)
+                try:
+                    video_frames = self._query_videos(query_timestamps, ep_idx)
+                except Exception as exc:
+                    last_video_error = exc
+                    logging.warning(
+                        "Skipping dataset sample due to video decode failure "
+                        "repo_id=%s idx=%s retry_idx=%s episode_index=%s error=%r",
+                        self.repo_id,
+                        idx,
+                        current_idx,
+                        ep_idx,
+                        exc,
+                    )
+                    continue
+                item = {**video_frames, **item}
 
-        # Add task as a string
-        task_idx = item["task_index"].item()
-        item["task"] = self.meta.tasks.iloc[task_idx].name
+            if self.image_transforms is not None:
+                image_keys = self.meta.camera_keys
+                for cam in image_keys:
+                    item[cam] = self.image_transforms(item[cam])
 
-        # add subtask information if available
-        if "subtask_index" in self.features and self.meta.subtasks is not None:
-            subtask_idx = item["subtask_index"].item()
-            item["subtask"] = self.meta.subtasks.iloc[subtask_idx].name
+            # Add task as a string
+            task_idx = item["task_index"].item()
+            item["task"] = self.meta.tasks.iloc[task_idx].name
 
-        return item
+            # add subtask information if available
+            if "subtask_index" in self.features and self.meta.subtasks is not None:
+                subtask_idx = item["subtask_index"].item()
+                item["subtask"] = self.meta.subtasks.iloc[subtask_idx].name
+
+            return item
+
+        raise RuntimeError(
+            f"Failed to load any valid sample starting from idx={idx} in repo_id={self.repo_id}."
+        ) from last_video_error
 
     def __repr__(self):
         feature_keys = list(self.features)

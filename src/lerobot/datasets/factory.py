@@ -115,7 +115,14 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 )
             )
 
-        dataset = ValueTrainingLeRobotDataset(datasets_, repo_ids=repo_ids)
+        image_resize_shape = cfg.value.image_resize_shape if getattr(cfg.value, "type", None) == "pistar06" else None
+        dataset = ValueTrainingLeRobotDataset(
+            datasets_,
+            repo_ids=repo_ids,
+            image_resize_shape=image_resize_shape,
+            image_resize_mode=cfg.value.image_resize_mode,
+            include_aligned_state=cfg.value.include_state_in_prompt,
+        )
     elif isinstance(cfg.dataset.repo_id, str):
         ds_meta = LeRobotDatasetMetadata(
             cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision

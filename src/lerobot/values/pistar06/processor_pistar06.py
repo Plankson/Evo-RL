@@ -132,10 +132,14 @@ class Pistar06PrepareTaskPromptProcessorStep(ProcessorStep):
 @dataclass
 class Pistar06PrepareImagesProcessorStep(ProcessorStep):
     camera_features: list[str]
+    resize_shape: tuple[int, int] | list[int] | None = None
+    resize_mode: str = "bilinear"
 
     def get_config(self) -> dict[str, Any]:
         return {
             "camera_features": self.camera_features,
+            "resize_shape": self.resize_shape,
+            "resize_mode": self.resize_mode,
         }
 
     @staticmethod
@@ -155,6 +159,20 @@ class Pistar06PrepareImagesProcessorStep(ProcessorStep):
     def _process_camera_batch(self, img_batch: Tensor) -> Tensor:
         return self._to_bchw(img_batch).detach().to(dtype=torch.float32)
 
+    def _get_resize_shape(self) -> tuple[int, int] | None:
+        if self.resize_shape is None:
+            return None
+        height = int(self.resize_shape[0])
+        width = int(self.resize_shape[1])
+        return height, width
+
+    def _resize_camera_batch(self, img_batch: Tensor, target_hw: tuple[int, int]) -> Tensor:
+        if tuple(img_batch.shape[-2:]) == tuple(target_hw):
+            return img_batch
+        if self.resize_mode in {"nearest", "nearest-exact", "area"}:
+            return functional.interpolate(img_batch, size=target_hw, mode=self.resize_mode)
+        return functional.interpolate(img_batch, size=target_hw, mode=self.resize_mode, align_corners=False)
+
     def _prepare_images(self, observation: dict[str, Any]) -> tuple[Tensor, Tensor]:
         present_img_keys = [key for key in self.camera_features if key in observation]
         if len(present_img_keys) == 0:
@@ -163,7 +181,10 @@ class Pistar06PrepareImagesProcessorStep(ProcessorStep):
                 f"expected={self.camera_features} batch_keys={list(observation.keys())}"
             )
 
+        resize_shape = self._get_resize_shape()
         reference_img = self._process_camera_batch(torch.as_tensor(observation[present_img_keys[0]]))
+        if resize_shape is not None:
+            reference_img = self._resize_camera_batch(reference_img, resize_shape)
         bsize = reference_img.shape[0]
         image_tensors: list[Tensor] = []
         image_masks: list[Tensor] = []
@@ -175,6 +196,13 @@ class Pistar06PrepareImagesProcessorStep(ProcessorStep):
                     raise ValueError(
                         f"Mismatched batch size across cameras. Camera '{key}' has {img.shape[0]}, expected {bsize}."
                     )
+                if img.shape[1] != reference_img.shape[1]:
+                    raise ValueError(
+                        "Camera tensors must share the same channel count before model preprocessing. "
+                        f"Camera '{key}' has {img.shape[1]} channels, expected {reference_img.shape[1]}."
+                    )
+                if resize_shape is not None:
+                    img = self._resize_camera_batch(img, resize_shape)
                 if img.shape[1:] != reference_img.shape[1:]:
                     raise ValueError(
                         "Camera tensors must share the same [C,H,W] shape before model preprocessing. "
@@ -241,7 +269,11 @@ def make_pistar06_pre_post_processors(
             padding="max_length",
             truncation=True,
         ),
-        Pistar06PrepareImagesProcessorStep(camera_features=camera_features),
+        Pistar06PrepareImagesProcessorStep(
+            camera_features=camera_features,
+            resize_shape=config.image_resize_shape,
+            resize_mode=config.image_resize_mode,
+        ),
         DeviceProcessorStep(device=config.device),
     ]
 

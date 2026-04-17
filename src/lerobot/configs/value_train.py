@@ -106,10 +106,10 @@ class ValueTrainPipelineConfig(HubMixin):
 
         if self.value is None:
             raise ValueError("Value is not configured. Please specify a value config with `--value.type`.")
-        if self.value.type != "pistar06":
+        if self.value.type != "ace_value" and self.value.type != "pistar06":
             raise ValueError(
                 f"Unsupported value type '{self.value.type}'. "
-                "Current lerobot-value-train supports only '--value.type=pistar06'."
+                "Current lerobot-value-train supports only '--value.type=ace_value/pistar06'."
             )
 
         self.targets.validate()

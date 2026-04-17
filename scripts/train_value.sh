@@ -9,15 +9,30 @@ conda activate evo-rl
 cd /data/users/qingyunpeng/code/Evo-RL
 
 
+#debug
+USE_MULTI_GPU=true \
+CUDA_VISIBLE_DEVICES_VALUE=1,2 \
+NUM_PROCESSES=2 \
+BATCH_SIZE=16 \
+INCLUDE_STATE_IN_PROMPT=false \
+REPO_ID=ace_fold_cloth_v3_debug \
+RUN_NAME=value_fcv3_debug \
+WANDB_ENABLE=false \
+OUTPUT_DIR=outputs/value_train/value_ace_fold_cloth_v3_debug \
+bash scripts/train_v.sh \
+--steps=40000
+
 # 多卡训
 USE_MULTI_GPU=true \
 CUDA_VISIBLE_DEVICES_VALUE=0,1,2,3,4,5,6,7 \
 NUM_PROCESSES=8 \
-BATCH_SIZE=32 \
-REPO_ID=ace_fold_cloth_v2 \
-RUN_NAME=value_fcv2 \
+NUM_WORKERS=1 \
+BATCH_SIZE=16 \
+INCLUDE_STATE_IN_PROMPT=false \
+REPO_ID=ace_fold_cloth_v4 \
+RUN_NAME=value_fcv4 \
 WANDB_ENABLE=true \
-OUTPUT_DIR=outputs/value_train/value_ace_fold_cloth_v2 \
+OUTPUT_DIR=outputs/value_train/value_ace_fold_cloth_v4 \
 bash scripts/train_v.sh \
 --steps=40000
 sleep inf # for debug!
@@ -33,5 +48,6 @@ BATCH_SIZE=64 \
 REPO_ID=ace_fold_cloth_v2 \
 RUN_NAME=value_fcv2 \
 WANDB_ENABLE=true \
+INCLUDE_STATE_IN_PROMPT=false \
 OUTPUT_DIR=outputs/value_train/value_multinode \
 bash scripts/train_value_multinode.sh --steps=40000

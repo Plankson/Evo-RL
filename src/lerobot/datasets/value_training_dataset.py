@@ -10,6 +10,7 @@ import datasets
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn.functional as functional
 from tqdm.auto import tqdm
 
 from lerobot.datasets.compute_stats import aggregate_stats
@@ -42,6 +43,19 @@ def _episode_table(dataset: LeRobotDataset) -> dict[str, list[Any]]:
     for key, values in table.items():
         filtered[key] = [value for value, keep in zip(values, keep_mask, strict=False) if bool(keep)]
     return filtered
+
+
+def _flatten_episode_tasks(task_value: Any) -> list[str]:
+    if hasattr(task_value, "tolist") and not isinstance(task_value, (str, bytes)):
+        return _flatten_episode_tasks(task_value.tolist())
+    if isinstance(task_value, list):
+        flattened: list[str] = []
+        for item in task_value:
+            flattened.extend(_flatten_episode_tasks(item))
+        return flattened
+    if task_value is None:
+        return []
+    return [str(task_value)]
 
 
 def align_state(item: dict[str, Any]) -> torch.Tensor:
@@ -128,13 +142,23 @@ class ValueTrainingDatasetMetadata:
 class ValueTrainingLeRobotDataset(torch.utils.data.Dataset):
     """Concatenate multiple LeRobot datasets for value training with fixed camera/state alignment."""
 
-    def __init__(self, datasets_: Sequence[LeRobotDataset], repo_ids: Sequence[str] | None = None):
+    def __init__(
+        self,
+        datasets_: Sequence[LeRobotDataset],
+        repo_ids: Sequence[str] | None = None,
+        image_resize_shape: tuple[int, int] | list[int] | None = None,
+        image_resize_mode: str = "bilinear",
+        include_aligned_state: bool = True,
+    ):
         super().__init__()
         _ensure(bool(datasets_), "At least one dataset is required for value training.")
 
         self._datasets = list(datasets_)
         self.repo_ids = list(repo_ids) if repo_ids is not None else [dataset.repo_id for dataset in self._datasets]
         self.delta_timestamps = None
+        self.image_resize_shape = self._normalize_resize_shape(image_resize_shape)
+        self.image_resize_mode = self._normalize_resize_mode(image_resize_mode)
+        self.include_aligned_state = bool(include_aligned_state)
 
         reference_meta = self._datasets[0].meta
 
@@ -172,6 +196,7 @@ class ValueTrainingLeRobotDataset(torch.utils.data.Dataset):
             "tasks": [],
             "length": [],
             "episode_success": [],
+            "repo_id": [],
         }
 
         per_dataset_stats: list[dict[str, dict[str, np.ndarray]]] = []
@@ -206,10 +231,12 @@ class ValueTrainingLeRobotDataset(torch.utils.data.Dataset):
             episode_task_names: dict[int, str] = {}
             for ep_idx, tasks in zip(episode_table["episode_index"], episode_table["tasks"], strict=True):
                 ep_idx_int = int(ep_idx)
-                if isinstance(tasks, list):
-                    episode_task_names[ep_idx_int] = str(tasks[0])
-                else:
-                    episode_task_names[ep_idx_int] = str(tasks)
+                flattened_tasks = _flatten_episode_tasks(tasks)
+                _ensure(
+                    bool(flattened_tasks),
+                    f"Episode {ep_idx_int} has no task annotation in value-training metadata.",
+                )
+                episode_task_names[ep_idx_int] = flattened_tasks[0]
             frame_task_indices = [
                 int(task_table.loc[episode_task_names[int(ep_idx)], "task_index"]) for ep_idx in frame_episode_indices
             ]
@@ -219,11 +246,12 @@ class ValueTrainingLeRobotDataset(torch.utils.data.Dataset):
             episode_rows["episode_index"].extend(
                 int(value) + episode_offset for value in episode_table["episode_index"]
             )
-            episode_rows["tasks"].extend(episode_table["tasks"])
+            episode_rows["tasks"].extend(_flatten_episode_tasks(tasks) for tasks in episode_table["tasks"])
             episode_rows["length"].extend(int(value) for value in episode_table["length"])
             episode_rows["episode_success"].extend(
                 episode_table.get("episode_success", [EPISODE_SUCCESS] * row_count)
             )
+            episode_rows["repo_id"].extend([repo_id] * row_count)
 
             aligned_stats: dict[str, dict[str, np.ndarray]] = {}
             for raw_camera_key, canonical_camera_key in zip(RAW_CAMERA_KEYS, CANONICAL_CAMERA_KEYS, strict=True):
@@ -231,7 +259,8 @@ class ValueTrainingLeRobotDataset(torch.utils.data.Dataset):
                     stat_name: np.asarray(stat_value)
                     for stat_name, stat_value in dataset.meta.stats[raw_camera_key].items()
                 }
-            aligned_stats[OBS_STATE] = align_state_stats(dataset.meta.stats)
+            if self.include_aligned_state:
+                aligned_stats[OBS_STATE] = align_state_stats(dataset.meta.stats)
             per_dataset_stats.append(aligned_stats)
 
             frame_indices = np.asarray(raw_frames["index"], dtype=np.int64)
@@ -251,7 +280,8 @@ class ValueTrainingLeRobotDataset(torch.utils.data.Dataset):
             canonical_camera_key: dict(reference_meta.features[raw_camera_key])
             for raw_camera_key, canonical_camera_key in zip(RAW_CAMERA_KEYS, CANONICAL_CAMERA_KEYS, strict=True)
         }
-        features[OBS_STATE] = _state_feature_spec()
+        if self.include_aligned_state:
+            features[OBS_STATE] = _state_feature_spec()
 
         episodes = datasets.Dataset.from_dict(episode_rows)
         stats = aggregate_stats(per_dataset_stats)
@@ -269,6 +299,62 @@ class ValueTrainingLeRobotDataset(torch.utils.data.Dataset):
             tasks=task_table,
             episodes=episodes,
         )
+
+    @staticmethod
+    def _normalize_resize_shape(
+        resize_shape: tuple[int, int] | list[int] | None,
+    ) -> tuple[int, int] | None:
+        if resize_shape is None:
+            return None
+        _ensure(len(resize_shape) == 2, "'image_resize_shape' must contain exactly two integers.")
+        height, width = int(resize_shape[0]), int(resize_shape[1])
+        _ensure(height > 0 and width > 0, "'image_resize_shape' values must be > 0.")
+        return height, width
+
+    @staticmethod
+    def _normalize_resize_mode(image_resize_mode: str) -> str:
+        valid_modes = {"nearest", "nearest-exact", "bilinear", "bicubic", "area"}
+        _ensure(
+            image_resize_mode in valid_modes,
+            "'image_resize_mode' must be one of {'nearest', 'nearest-exact', 'bilinear', 'bicubic', 'area'}.",
+        )
+        return image_resize_mode
+
+    def set_image_resize_shape(
+        self,
+        image_resize_shape: tuple[int, int] | list[int] | None,
+        image_resize_mode: str | None = None,
+    ) -> None:
+        self.image_resize_shape = self._normalize_resize_shape(image_resize_shape)
+        if image_resize_mode is not None:
+            self.image_resize_mode = self._normalize_resize_mode(image_resize_mode)
+
+    @staticmethod
+    def _to_chw(image: torch.Tensor) -> torch.Tensor:
+        if image.ndim != 3:
+            raise ValueError(f"Expected image tensor rank 3, got shape {tuple(image.shape)}.")
+        if image.shape[0] in {1, 3}:
+            return image
+        if image.shape[-1] in {1, 3}:
+            return image.permute(2, 0, 1)
+        raise ValueError(f"Unsupported image shape {tuple(image.shape)}. Expected CHW or HWC.")
+
+    @staticmethod
+    def _resize_single_image(image: torch.Tensor, target_hw: tuple[int, int], resize_mode: str) -> torch.Tensor:
+        chw = ValueTrainingLeRobotDataset._to_chw(image)
+        if tuple(chw.shape[-2:]) == tuple(target_hw):
+            return chw
+        image_batched = chw.unsqueeze(0).to(dtype=torch.float32)
+        if resize_mode in {"nearest", "nearest-exact", "area"}:
+            resized = functional.interpolate(image_batched, size=target_hw, mode=resize_mode).squeeze(0)
+        else:
+            resized = functional.interpolate(
+                image_batched,
+                size=target_hw,
+                mode=resize_mode,
+                align_corners=False,
+            ).squeeze(0)
+        return resized
 
     @property
     def num_frames(self) -> int:
@@ -298,10 +384,18 @@ class ValueTrainingLeRobotDataset(torch.utils.data.Dataset):
                 int(item["episode_index"].item()) + dataset_slice.episode_offset,
                 dtype=torch.long,
             ),
-            OBS_STATE: align_state(item),
         }
+        if self.include_aligned_state:
+            sample[OBS_STATE] = align_state(item)
         for raw_camera_key, canonical_camera_key in zip(RAW_CAMERA_KEYS, CANONICAL_CAMERA_KEYS, strict=True):
-            sample[canonical_camera_key] = item[raw_camera_key]
+            image = item[raw_camera_key]
+            if self.image_resize_shape is not None:
+                image = self._resize_single_image(
+                    torch.as_tensor(image),
+                    self.image_resize_shape,
+                    self.image_resize_mode,
+                )
+            sample[canonical_camera_key] = image
         return sample
 
     def __repr__(self) -> str:

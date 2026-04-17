@@ -19,6 +19,7 @@ class ValueInferenceDatasetConfig:
     episodes: list[int] | None = None
     revision: str | None = None
     download_videos: bool = True
+    tolerance_s: float = 1e-4
     success_field: str = "episode_success"
     default_success: str = "failure"
 
@@ -51,12 +52,25 @@ class ValueInferenceRuntimeConfig:
     device: str = "cuda"
     batch_size: int = 64
     num_workers: int = 4
+    write_to_dataset: bool = True
+    image_resize_shape: list[int] | tuple[int, int] | None = None
+    image_resize_mode: str = "bilinear"
 
     def validate(self) -> None:
         if self.batch_size <= 0:
             raise ValueError("'runtime.batch_size' must be > 0.")
         if self.num_workers < 0:
             raise ValueError("'runtime.num_workers' must be >= 0.")
+        if self.image_resize_shape is not None:
+            if len(self.image_resize_shape) != 2:
+                raise ValueError("'runtime.image_resize_shape' must be a pair like [height, width].")
+            if any(int(v) <= 0 for v in self.image_resize_shape):
+                raise ValueError("'runtime.image_resize_shape' values must be > 0.")
+        if self.image_resize_mode not in {"nearest", "nearest-exact", "bilinear", "bicubic", "area"}:
+            raise ValueError(
+                "'runtime.image_resize_mode' must be one of "
+                "{'nearest', 'nearest-exact', 'bilinear', 'bicubic', 'area'}."
+            )
 
 
 @dataclass
