@@ -173,9 +173,37 @@ def record_loop(
     acp_inference: ACPInferenceConfig | None = None,
     communication_retry_timeout_s: float = 2.0,
     communication_retry_interval_s: float = 0.1,
+    use_monitor: bool = False,
 ):
     if acp_inference is None:
         acp_inference = ACPInferenceConfig()
+
+    # --- MONITOR INITIALIZATION ---
+    signal_queue = None
+    monitor_stop_event = None
+    shared_danger = None
+    if use_monitor:
+        import multiprocessing
+        from lerobot.utils.monitor_utils import detector_process_worker, alarm_poller_worker
+        signal_queue = multiprocessing.Queue()
+        monitor_stop_event = multiprocessing.Event()
+        shared_danger = multiprocessing.Value('i', 0) # 0 = Safe, 1 = Danger
+        
+        # 1. Start Independent Detector Subprocess
+        det_proc = multiprocessing.Process(
+            target=detector_process_worker,
+            args=(robot, robot_observation_processor, policy, signal_queue, monitor_stop_event),
+            daemon=True
+        )
+        # 2. Start Alarm Poller Subprocess (now updates shared_danger)
+        alarm_proc = multiprocessing.Process(
+            target=alarm_poller_worker,
+            args=(signal_queue, shared_danger, monitor_stop_event),
+            daemon=True
+        )
+        det_proc.start()
+        alarm_proc.start()
+    # ------------------------------
 
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
@@ -362,6 +390,13 @@ def record_loop(
             )
             act_processed_policy = make_robot_action(policy_action, dataset.features)
 
+        # --- MONITOR EXTRACTION ---
+        if use_monitor and hasattr(policy, 'last_predictor_safety') and policy.last_predictor_safety:
+            import time
+            signal_queue.put({**policy.last_predictor_safety, "timestamp": time.time()})
+            policy.last_predictor_safety = None
+        # --------------------------
+
         if isinstance(teleop, Teleoperator):
             act = run_with_connection_retry("teleop.get_action", teleop.get_action)
 
@@ -499,3 +534,10 @@ def record_loop(
         precise_sleep(max(1 / fps - dt_s, 0.0))
 
         timestamp = time.perf_counter() - start_episode_t
+
+    # --- MONITOR CLEANUP ---
+    if use_monitor:
+        monitor_stop_event.set()
+        det_proc.join(timeout=1.0)
+        alarm_proc.join(timeout=1.0)
+    # -----------------------
