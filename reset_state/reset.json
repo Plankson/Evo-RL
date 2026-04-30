@@ -1,19 +1,19 @@
 {
-    "joint_pos": {
-      "left_gripper.pos": 0.3,
-      "left_joint_1.pos": 0.197,
-      "left_joint_2.pos": 5.861,
-      "left_joint_3.pos": -0.31,
-      "left_joint_4.pos": 4.039,
-      "left_joint_5.pos": 17.824,
-      "left_joint_6.pos": -9.719,
-      "right_gripper.pos": 1.19,
-      "right_joint_1.pos": -5.541,
-      "right_joint_2.pos": 0.357,
-      "right_joint_3.pos": 0.03,
-      "right_joint_4.pos": 7.214,
-      "right_joint_5.pos": 29.165,
-      "right_joint_6.pos": -5.473
-    },
-    "robot_type": "bi_piper_follower"
-  }
+  "joint_pos": {
+    "left_gripper.pos": 0.3,
+    "left_joint_1.pos": 4.744547441050539,
+    "left_joint_2.pos": 53.65838108426611,
+    "left_joint_3.pos": -38.47814239945693,
+    "left_joint_4.pos": -25.61124372862126,
+    "left_joint_5.pos": 18.31826294162638,
+    "left_joint_6.pos": 29.05683981311849,
+    "right_gripper.pos": 1.19,
+    "right_joint_1.pos": -4.988517217370419,
+    "right_joint_2.pos": 58.45354350251331,
+    "right_joint_3.pos": -44.87739057736535,
+    "right_joint_4.pos": 6.243339560573063,
+    "right_joint_5.pos": 19.44204570984504,
+    "right_joint_6.pos": -5.996525222967239
+  },
+  "robot_type": "bi_piper_follower"
+}
