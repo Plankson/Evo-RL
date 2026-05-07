@@ -180,37 +180,11 @@ def record_loop(
     if acp_inference is None:
         acp_inference = ACPInferenceConfig()
 
-    # --- MONITOR INITIALIZATION ---
     signal_queue = None
     monitor_stop_event = None
     shared_danger = None
-    if use_monitor:
-        import multiprocessing
-        from lerobot.utils.monitor_utils import detector_process_worker, alarm_poller_worker
-        ctx = (
-            multiprocessing.get_context("fork")
-            if "fork" in multiprocessing.get_all_start_methods()
-            else multiprocessing
-        )
-        signal_queue = ctx.Queue()
-        monitor_stop_event = ctx.Event()
-        shared_danger = ctx.Value("i", 0)  # 0 = Safe, 1 = Danger
-        
-        # 1. Start Independent Detector Subprocess
-        det_proc = ctx.Process(
-            target=detector_process_worker,
-            args=(robot, robot_observation_processor, policy, signal_queue, monitor_stop_event),
-            daemon=True,
-        )
-        # 2. Start Alarm Poller Subprocess (now updates shared_danger)
-        alarm_proc = ctx.Process(
-            target=alarm_poller_worker,
-            args=(signal_queue, shared_danger, monitor_stop_event),
-            daemon=True,
-        )
-        det_proc.start()
-        alarm_proc.start()
-    # ------------------------------
+    det_proc = None
+    alarm_proc = None
 
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
@@ -281,6 +255,35 @@ def record_loop(
         policy.reset()
         preprocessor.reset()
         postprocessor.reset()
+
+    # --- MONITOR INITIALIZATION ---
+    if use_monitor:
+        import multiprocessing
+        from lerobot.utils.monitor_utils import detector_process_worker, alarm_poller_worker
+
+        ctx = (
+            multiprocessing.get_context("fork")
+            if "fork" in multiprocessing.get_all_start_methods()
+            else multiprocessing
+        )
+        signal_queue = ctx.Queue()
+        monitor_stop_event = ctx.Event()
+        shared_danger = ctx.Value("i", 0)  # 0 = Safe, 1 = Danger
+
+        # Start monitor workers after `policy.reset()` so each episode begins cleanly.
+        det_proc = ctx.Process(
+            target=detector_process_worker,
+            args=(robot, robot_observation_processor, policy, signal_queue, monitor_stop_event),
+            daemon=True,
+        )
+        alarm_proc = ctx.Process(
+            target=alarm_poller_worker,
+            args=(signal_queue, shared_danger, monitor_stop_event),
+            daemon=True,
+        )
+        det_proc.start()
+        alarm_proc.start()
+    # ------------------------------
 
     cond_policy_runtime_state: dict[str, Any] | None = None
     uncond_policy_runtime_state: dict[str, Any] | None = None
@@ -545,6 +548,8 @@ def record_loop(
         # --- MONITOR CLEANUP ---
         if use_monitor:
             monitor_stop_event.set()
-            det_proc.join(timeout=1.0)
-            alarm_proc.join(timeout=1.0)
+            if det_proc is not None:
+                det_proc.join(timeout=1.0)
+            if alarm_proc is not None:
+                alarm_proc.join(timeout=1.0)
         # -----------------------
