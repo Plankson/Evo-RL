@@ -73,6 +73,7 @@ class RemoteMonitorPolicy(PreTrainedPolicy):
         self.predictor_client = None
         self.detector_client = None
         self.last_predictor_safety: Optional[Dict[str, Any]] = None
+        self.predictor_infer_count: int = 0
 
     def _make_predictor_client(self):
         return OpenPiWebsocketClient(
@@ -101,6 +102,7 @@ class RemoteMonitorPolicy(PreTrainedPolicy):
     def reset(self):
         self._action_queue.clear()
         self.last_predictor_safety = None
+        self.predictor_infer_count = 0
 
     @torch.no_grad()
     def infer_detector(self, batch: dict[str, torch.Tensor]) -> Dict[str, Any]:
@@ -119,6 +121,7 @@ class RemoteMonitorPolicy(PreTrainedPolicy):
     def predict_action_chunk(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
         client_obs = batch_to_client_observation(batch, self.config.predictor_remote)
         result = self._get_predictor_client().infer(client_obs)
+        self.predictor_infer_count += 1
         
         # Store safety info in the mailbox
         self.last_predictor_safety = {

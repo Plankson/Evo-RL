@@ -7,10 +7,8 @@ import logging
 import math
 import multiprocessing
 import queue
-import threading
 import time
 from collections import deque
-from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -152,72 +150,30 @@ def _predict_policy_action_with_acp_inference_from_source(
     return action_uncond + acp_inference.cfg_beta * (action_cond - action_uncond)
 
 
-@dataclass
-class ObservationSample:
-    seq: int
-    observed_at_s: float
-    raw_obs: RobotObservation
-
-
-class ObservationPool:
-    def __init__(self, maxlen: int):
-        self._samples: deque[ObservationSample] = deque(maxlen=maxlen)
-        self._cond = threading.Condition()
-
-    def publish(self, sample: ObservationSample) -> None:
-        with self._cond:
-            self._samples.append(sample)
-            self._cond.notify_all()
-
-    def latest(self, min_seq: int | None = None, timeout_s: float | None = None) -> ObservationSample:
-        with self._cond:
-            deadline = None if timeout_s is None else time.monotonic() + timeout_s
-            while True:
-                if self._samples:
-                    sample = self._samples[-1]
-                    if min_seq is None or sample.seq > min_seq:
-                        return sample
-
-                if deadline is None:
-                    self._cond.wait()
-                else:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        if not self._samples:
-                            raise TimeoutError("Observation pool did not receive any sample in time.")
-                        return self._samples[-1]
-                    self._cond.wait(timeout=remaining)
-
-
-def publish_observation_sample(
+def publish_observation_to_detector(
     *,
-    observation_pool: ObservationPool,
     detector_source_queue,
     seq: int,
     raw_obs: RobotObservation,
-) -> ObservationSample:
-    sample = ObservationSample(seq=seq, observed_at_s=time.time(), raw_obs=raw_obs)
-    observation_pool.publish(sample)
-
-    if detector_source_queue is not None:
-        payload = {
-            "seq": sample.seq,
-            "observed_at_s": sample.observed_at_s,
-            "raw_obs": copy.deepcopy(raw_obs),
-        }
+) -> None:
+    if detector_source_queue is None:
+        return
+    payload = {
+        "seq": seq,
+        "observed_at_s": time.time(),
+        "raw_obs": copy.deepcopy(raw_obs),
+    }
+    try:
+        detector_source_queue.put_nowait(payload)
+    except queue.Full:
+        try:
+            detector_source_queue.get_nowait()
+        except queue.Empty:
+            pass
         try:
             detector_source_queue.put_nowait(payload)
         except queue.Full:
-            try:
-                detector_source_queue.get_nowait()
-            except queue.Empty:
-                pass
-            try:
-                detector_source_queue.put_nowait(payload)
-            except queue.Full:
-                pass
-
-    return sample
+            pass
 
 
 def handle_failure(signal: dict[str, Any]) -> None:
@@ -405,7 +361,6 @@ def record_loop_monitor(
     signal_queue = ctx.Queue()
     stop_event = ctx.Event()
     shared_danger = ctx.Value("i", 0)
-    observation_pool = ObservationPool(max(observation_pool_size, 1))
     detector_proc = ctx.Process(
         target=detector_process_worker,
         args=(
@@ -418,14 +373,14 @@ def record_loop_monitor(
             robot.robot_type,
             signal_queue,
             stop_event,
-            observation_pool_size,
+            max(observation_pool_size, 1),
         ),
-        daemon=True,
+        daemon=False,
     )
     alarm_proc = ctx.Process(
         target=alarm_poller_worker,
         args=(signal_queue, shared_danger, stop_event),
-        daemon=True,
+        daemon=False,
     )
 
     def run_with_connection_retry(action_name: str, fn):
@@ -493,14 +448,13 @@ def record_loop_monitor(
                     logger.info("Intervention toggle ignored because policy+teleop are not both active.")
 
             raw_obs = robot.get_observation()
-            sample = publish_observation_sample(
-                observation_pool=observation_pool,
+            source_seq = sample_seq
+            sample_seq += 1
+            publish_observation_to_detector(
                 detector_source_queue=detector_source_queue,
-                seq=sample_seq,
+                seq=source_seq,
                 raw_obs=raw_obs,
             )
-            sample_seq += 1
-            raw_obs = sample.raw_obs
             obs_processed = robot_observation_processor(raw_obs)
             obs_processed = _convert_joint_positions_deg_to_rad(obs_processed)
             observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
@@ -525,7 +479,7 @@ def record_loop_monitor(
                 act_processed_policy = make_robot_action(policy_action, dataset.features)
 
             if getattr(policy, "last_predictor_safety", None):
-                signal_queue.put({**policy.last_predictor_safety, "timestamp": time.time(), "source_seq": sample.seq})
+                signal_queue.put({**policy.last_predictor_safety, "timestamp": time.time(), "source_seq": source_seq})
                 policy.last_predictor_safety = None
 
             if isinstance(teleop, Teleoperator):
@@ -634,5 +588,11 @@ def record_loop_monitor(
             timestamp = time.perf_counter() - start_episode_t
     finally:
         stop_event.set()
-        detector_proc.join(timeout=1.0)
-        alarm_proc.join(timeout=1.0)
+        detector_proc.join(timeout=2.0)
+        alarm_proc.join(timeout=2.0)
+        if detector_proc.is_alive():
+            detector_proc.terminate()
+            detector_proc.join(timeout=2.0)
+        if alarm_proc.is_alive():
+            alarm_proc.terminate()
+            alarm_proc.join(timeout=2.0)
