@@ -414,11 +414,13 @@ def record_loop_monitor(
     if intervention_enabled:
         set_teleop_manual_control(False)
 
-    ctx = (
-        multiprocessing.get_context("fork")
-        if "fork" in multiprocessing.get_all_start_methods()
-        else multiprocessing
-    )
+    # Do not fork after robot/camera connections are live. RealSense cameras run
+    # background reader threads, and forking a multithreaded process can corrupt
+    # the parent-side camera pipeline even when the child never touches the robot.
+    if "spawn" in multiprocessing.get_all_start_methods():
+        ctx = multiprocessing.get_context("spawn")
+    else:
+        ctx = multiprocessing
     detector_source_queue = ctx.Queue(maxsize=max(detector_queue_size, 1))
     signal_queue = ctx.Queue()
     stop_event = ctx.Event()
