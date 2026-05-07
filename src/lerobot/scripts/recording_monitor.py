@@ -15,6 +15,9 @@ import numpy as np
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import build_dataset_frame
+from lerobot.policies.remote_client.modeling_remote_client import batch_to_client_observation
+from lerobot.policies.remote_monitor.configuration_remote_monitor import RemoteMonitorEndpointConfig
+from lerobot.policies.remote_monitor.modeling_remote_monitor import OpenPiWebsocketClient
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import make_robot_action
 from lerobot.processor import (
@@ -183,8 +186,8 @@ def handle_failure(signal: dict[str, Any]) -> None:
 
 def detector_process_worker(
     observation_queue,
-    policy: PreTrainedPolicy,
-    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None,
+    detector_endpoint_config: RemoteMonitorEndpointConfig,
+    policy_device: str | None,
     robot_observation_processor: RobotProcessorPipeline[RobotObservation, RobotObservation],
     dataset_features: dict[str, Any],
     task: str | None,
@@ -194,11 +197,13 @@ def detector_process_worker(
     history_size: int,
 ) -> None:
     logger.info("[DETECTOR] Process started.")
-    policy.reset()
-    if preprocessor is not None:
-        preprocessor.reset()
+    detector_client = OpenPiWebsocketClient(
+        host=detector_endpoint_config.host,
+        port=detector_endpoint_config.port,
+        api_key=detector_endpoint_config.api_key,
+    )
     history: deque[dict[str, Any]] = deque(maxlen=history_size)
-    device = get_safe_torch_device(policy.config.device)
+    device = get_safe_torch_device(policy_device)
 
     try:
         while not stop_event.is_set():
@@ -220,10 +225,17 @@ def detector_process_worker(
                     task,
                     robot_type,
                 )
-                if preprocessor is not None:
-                    batch = preprocessor(batch)
-                result = policy.infer_detector(batch)
-                signal_queue.put({**result, "timestamp": time.time(), "source_seq": latest["seq"]})
+                detector_obs = batch_to_client_observation(batch, detector_endpoint_config)
+                result = detector_client.infer(detector_obs)
+                signal_queue.put(
+                    {
+                        "source": "detector",
+                        "is_dangerous": result.get("is_dangerous", False),
+                        "score": result.get("score", 0.0),
+                        "timestamp": time.time(),
+                        "source_seq": latest["seq"],
+                    }
+                )
             except Exception as exc:
                 logger.error("[DETECTOR] Error in background loop: %s", exc)
                 time.sleep(0.01)
@@ -365,8 +377,8 @@ def record_loop_monitor(
         target=detector_process_worker,
         args=(
             detector_source_queue,
-            policy,
-            preprocessor,
+            policy.config.detector_remote,
+            policy.config.device,
             robot_observation_processor,
             dataset.features,
             single_task,
