@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${SCRIPT_DIR}"
+
 lerobot-setup-can --mode=setup --interfaces=can_left,can_back_left,can_right,can_back_right
 
 # PROMPT="fold clothes"
@@ -140,4 +143,9 @@ args=(
   --policy.predictor_remote.n_action_steps=24
 )
 
-lerobot-human-inloop-record-monitor "${args[@]}"
+if command -v lerobot-human-inloop-record-monitor >/dev/null 2>&1; then
+  lerobot-human-inloop-record-monitor "${args[@]}"
+else
+  PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" \
+    python -m lerobot.scripts.lerobot_human_inloop_record_monitor "${args[@]}"
+fi
