@@ -16,7 +16,7 @@ from .configuration_remote_monitor import RemoteMonitorConfig
 logger = logging.getLogger(__name__)
 
 
-class OpenPiWebsocketClientNoMetadata:
+class OpenPiWebsocketClient:
     """OpenPI-compatible websocket client for servers without startup metadata."""
 
     def __init__(self, host: str = "0.0.0.0", port: int | None = None, api_key: str | None = None) -> None:
@@ -75,16 +75,14 @@ class RemoteMonitorPolicy(PreTrainedPolicy):
         self.last_predictor_safety: Optional[Dict[str, Any]] = None
 
     def _make_predictor_client(self):
-        from openpi_client.websocket_client_policy import WebsocketClientPolicy
-
-        return WebsocketClientPolicy(
+        return OpenPiWebsocketClient(
             host=self.config.predictor_remote.host,
             port=self.config.predictor_remote.port,
             api_key=self.config.predictor_remote.api_key,
         )
 
     def _make_detector_client(self):
-        return OpenPiWebsocketClientNoMetadata(
+        return OpenPiWebsocketClient(
             host=self.config.detector_remote.host,
             port=self.config.detector_remote.port,
             api_key=self.config.detector_remote.api_key,
