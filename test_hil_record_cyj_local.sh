@@ -3,21 +3,14 @@ set -euo pipefail
 
 lerobot-setup-can --mode=setup --interfaces=can_left,can_back_left,can_right,can_back_right
 
-# PROMPT="wipe the table with the towel"
-# PROMPT="fold clothes"
-# PROMPT="Zip up the zipper of the clothes"
-# PROMPT="hang clothes on the hanger"
-# PROMPT="PUT THE CUBES INTO BUCKET"
-# PROMPT="PUSH OBJECTS WITH MARKER"
-# PROMPT="POUR WATER FROM ONE CUP INTO ANOTHER CUP"
-PROMPT="WIPE THE TABLE WITH THE TOWEL"
-# PROMPT="BAG ITEMS INTO PAPER BAG"
-# PROMPT="PUT THE PEN INTO THE PEN HOLDER"
+# PROMPT="prompt"
+PROMPT="hang clothes on the hanger"
+#PROMPT="fold clothes"
 
-# POLICY_NAME="pi0"
-POLICY_NAME="ace_policy"
+POLICY_NAME="pi0"
+#POLICY_NAME="ace_policy"
 
-TAG="new_ck"
+TAG="cyj_ck_local"
 TESTMODE="false"
 
 for arg in "$@"; do
@@ -103,10 +96,10 @@ args=(
   --play_sounds=false
   --test_mode="${TESTMODE}"
   --policy.policy_name="${POLICY_NAME}"
-  --policy.host=103.237.28.254
-  --policy.port=3336
+  --policy.host=169.254.118.66
+  --policy.port=8088
   --policy.chunk_size=50
-  --policy.n_action_steps=24
+  --policy.n_action_steps=36
 )
 
 lerobot-human-inloop-record "${args[@]}"

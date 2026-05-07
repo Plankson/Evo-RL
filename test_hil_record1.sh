@@ -7,10 +7,11 @@ lerobot-setup-can --mode=setup --interfaces=can_left,can_back_left,can_right,can
 PROMPT="fold clothes"
 #PROMPT="hang clothes on the hanger"
 # PROMPT="put the cubes into bucket"
-PROMPT="wipe the table with the towel"
+# PROMPT="wipe the table with the towel"
 # PROMPT="put the pen into the pen holder"
 #PROMPT="put the cubes into bucket"
 #PROMPT="pour water from one cup into another cup"
+PROMPT="put the pen into the pen holder"
 #wipe the table with the towel
 #bag items into paper bag
 #push objects with marker
@@ -62,7 +63,7 @@ args=(
   --policy.host=103.237.28.254
   --policy.port=3336
   --policy.chunk_size=50
-  --policy.n_action_steps=24
+  --policy.n_action_steps=16
 )
 
 lerobot-human-inloop-record "${args[@]}"

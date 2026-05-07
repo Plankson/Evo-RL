@@ -164,7 +164,7 @@ class _HumanInloopFailureResetController:
             return
         if self.policy_start_pose is None:
             self.policy_start_pose = _load_failure_reset_pose(self.policy_start_pose_path)
-        _slow_reset_all_arms_to_pose(robot=robot, teleop=teleop, target_pose=self.policy_start_pose, duration_s=3.0)
+        _slow_reset_all_arms_to_pose(robot=robot, teleop=teleop, target_pose=self.policy_start_pose, duration_s=10.0)
 
 
 @parser.wrap()
