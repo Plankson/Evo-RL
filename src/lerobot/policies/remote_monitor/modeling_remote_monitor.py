@@ -10,7 +10,6 @@ from lerobot.policies.remote_client.modeling_remote_client import (
 )
 from lerobot.utils.constants import ACTION
 from .configuration_remote_monitor import RemoteMonitorConfig
-from .websocket_utils import SimpleWebsocketClient
 
 logger = logging.getLogger(__name__)
 
@@ -25,13 +24,29 @@ class RemoteMonitorPolicy(PreTrainedPolicy):
     def __init__(self, config: RemoteMonitorConfig, *inputs, **kwargs):
         super().__init__(config, *inputs, **kwargs)
         self._action_queue: deque[torch.Tensor] = deque()
-        
-        # Two independent clients
-        self.predictor_client = SimpleWebsocketClient(host=config.host, port=config.predictor_remote.port)
-        self.detector_client = SimpleWebsocketClient(host=config.host, port=config.detector_remote.port)
-        
-        # "Mailbox" for safety results
+
+        self.predictor_client = None
+        self.detector_client = None
         self.last_predictor_safety: Optional[Dict[str, Any]] = None
+
+    def _make_client(self, endpoint_config):
+        from openpi_client.websocket_client_policy import WebsocketClientPolicy
+
+        return WebsocketClientPolicy(
+            host=endpoint_config.host,
+            port=endpoint_config.port,
+            api_key=endpoint_config.api_key,
+        )
+
+    def _get_predictor_client(self):
+        if self.predictor_client is None:
+            self.predictor_client = self._make_client(self.config.predictor_remote)
+        return self.predictor_client
+
+    def _get_detector_client(self):
+        if self.detector_client is None:
+            self.detector_client = self._make_client(self.config.detector_remote)
+        return self.detector_client
 
     def reset(self):
         self._action_queue.clear()
@@ -43,7 +58,7 @@ class RemoteMonitorPolicy(PreTrainedPolicy):
         Support function for the background detector process.
         """
         client_obs = batch_to_client_observation(batch, self.config.detector_remote)
-        result = self.detector_client.infer(client_obs)
+        result = self._get_detector_client().infer(client_obs)
         return {
             "source": "detector",
             "is_dangerous": result.get("is_dangerous", False),
@@ -53,7 +68,7 @@ class RemoteMonitorPolicy(PreTrainedPolicy):
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
         client_obs = batch_to_client_observation(batch, self.config.predictor_remote)
-        result = self.predictor_client.infer(client_obs)
+        result = self._get_predictor_client().infer(client_obs)
         
         # Store safety info in the mailbox
         self.last_predictor_safety = {
