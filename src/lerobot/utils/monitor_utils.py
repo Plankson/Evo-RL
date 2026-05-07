@@ -1,5 +1,6 @@
 import logging
 import multiprocessing
+from queue import Empty
 import time
 import torch
 from typing import Any, Dict
@@ -54,7 +55,7 @@ def alarm_poller_worker(signal_queue, shared_danger, stop_event):
                 # Call handling procedure immediately
                 handle_failure(signal)
                 
-        except multiprocessing.queues.Empty:
+        except Empty:
             continue
         except Exception as e:
             logger.error(f"[ALARM] Poller error: {e}")

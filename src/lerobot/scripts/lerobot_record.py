@@ -239,6 +239,8 @@ class RecordConfig:
     collector_policy_id_human: str = "human"
     # ACP inference controls for policy-driven recording.
     acp_inference: ACPInferenceConfig = field(default_factory=ACPInferenceConfig)
+    # Enable the secondary monitor pipeline when using `remote_monitor`.
+    use_monitor: bool = False
     # Retry timeout for transient communication errors (seconds). Set to 0 to fail immediately.
     communication_retry_timeout_s: float = 2.0
     # Sleep interval between communication retries (seconds).
@@ -288,6 +290,10 @@ class RecordConfig:
             raise ValueError("`acp_inference.use_cfg=true` requires `acp_inference.enable=true`.")
         if self.acp_inference.cfg_beta < 0:
             raise ValueError("`acp_inference.cfg_beta` must be >= 0.")
+        if self.use_monitor and self.policy is None:
+            raise ValueError("`use_monitor=true` requires `policy` to be set.")
+        if self.use_monitor and self.policy is not None and self.policy.type != "remote_monitor":
+            raise ValueError("`use_monitor=true` currently requires `--policy.type=remote_monitor`.")
         if self.communication_retry_timeout_s < 0:
             raise ValueError("`communication_retry_timeout_s` must be >= 0.")
         if self.communication_retry_interval_s <= 0:
@@ -486,6 +492,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     collector_policy_id_policy=collector_policy_id_policy,
                     collector_policy_id_human=collector_policy_id_human,
                     acp_inference=cfg.acp_inference,
+                    use_monitor=cfg.use_monitor,
                     communication_retry_timeout_s=cfg.communication_retry_timeout_s,
                     communication_retry_interval_s=cfg.communication_retry_interval_s,
                 )
@@ -617,4 +624,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

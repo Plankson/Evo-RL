@@ -1,0 +1,117 @@
+# Monitor Pipeline for `lerobot-human-inloop-record`
+
+This document summarizes the monitor workflow added in commit `109a7d5` (`feat: add monitor`) and the exact CLI arguments needed to run it through the same entry point as normal `test_hil_record`.
+
+## Entry point
+
+Use the same command entry point as the normal HIL evaluation flow:
+
+```bash
+lerobot-human-inloop-record ...
+```
+
+The monitor path is enabled by switching the policy type from `remote_client` to `remote_monitor` and turning on `--use_monitor=true`.
+
+## Runtime workflow
+
+With `--policy.type=remote_monitor`, one policy object owns two remote websocket clients:
+
+- `predictor_remote`: queried by the main HIL control loop for action chunks.
+- `detector_remote`: queried by a background detector worker for safety-only checks.
+
+The control flow is:
+
+1. `record_loop()` reads robot observations exactly like the normal HIL path.
+2. The main policy path sends the observation to `predictor_remote`.
+3. The predictor response returns the action chunk and may also include monitor fields such as `is_dangerous` and `safety_score`.
+4. The predictor safety result is pushed into a monitor signal queue.
+5. In parallel, a detector worker process samples the robot independently, sends observations to `detector_remote`, and pushes its safety result into the same queue.
+6. An alarm poller consumes both predictor and detector signals.
+7. If either source reports danger, the poller raises a shared danger flag.
+8. The current recording loop does not interrupt execution yet. The handling path is intentionally left as a TODO hook.
+
+Current behavior is monitor-only logging plus shared state update, not robot-level emergency stop and not episode interruption. The hook for future safety handling is still `handle_failure()` in [monitor_utils.py](/Users/liujingyuan1/Documents/code/ace/Evo-RL/src/lerobot/utils/monitor_utils.py).
+
+## Required CLI arguments
+
+Relative to the normal `test_hil_record.sh`, the monitor-specific arguments are:
+
+```bash
+--policy.type=remote_monitor
+--use_monitor=true
+--policy.host=<server_host>
+--policy.predictor_remote.port=<predictor_port>
+--policy.detector_remote.port=<detector_port>
+```
+
+In practice you will usually also want the predictor-side remote-client settings that were previously passed under `--policy.*`:
+
+```bash
+--policy.predictor_remote.policy_name=<policy_name>
+--policy.predictor_remote.chunk_size=<chunk_size>
+--policy.predictor_remote.n_action_steps=<n_action_steps>
+```
+
+If your server expects the same observation mapping as the old `remote_client` path, also pass the nested predictor and detector overrides explicitly:
+
+```bash
+--policy.predictor_remote.image_key_map='{ right_front: cam_high, left_wrist: cam_left_wrist, right_wrist: cam_right_wrist }'
+--policy.detector_remote.image_key_map='{ right_front: cam_high, left_wrist: cam_left_wrist, right_wrist: cam_right_wrist }'
+--policy.predictor_remote.state_joints_indices='[...]'
+--policy.predictor_remote.state_gripper_indices='[...]'
+--policy.detector_remote.state_joints_indices='[...]'
+--policy.detector_remote.state_gripper_indices='[...]'
+```
+
+`remote_monitor` inherits the nested `predictor_remote` and `detector_remote` fields from `RemoteClientConfig`, so any payload-format or key-mapping override you used for `remote_client` should now be applied under one or both of those nested prefixes.
+
+## Minimal command delta from `test_hil_record.sh`
+
+If your current working command is the normal remote predictor setup:
+
+```bash
+--policy.type=remote_client
+--policy.host=103.237.28.254
+--policy.port=3336
+--policy.policy_name=ace_policy
+--policy.chunk_size=50
+--policy.n_action_steps=24
+```
+
+replace it with:
+
+```bash
+--policy.type=remote_monitor
+--use_monitor=true
+--policy.host=103.237.28.254
+--policy.predictor_remote.port=3336
+--policy.detector_remote.port=3337
+--policy.predictor_remote.policy_name=ace_policy
+--policy.predictor_remote.chunk_size=50
+--policy.predictor_remote.n_action_steps=24
+--policy.detector_remote.policy_name=ace_policy
+```
+
+If detector and predictor use the same payload schema, mirror any needed `image_key_map`, `state_joints_indices`, and `state_gripper_indices` arguments to both nested remotes.
+
+## Full example
+
+Below is the monitor-specific policy section that can replace the policy part of `test_hil_record.sh`:
+
+```bash
+args=(
+  ...
+  --policy.type=remote_monitor
+  --use_monitor=true
+  --policy.host=103.237.28.254
+  --policy.predictor_remote.port=3336
+  --policy.detector_remote.port=3337
+  --policy.predictor_remote.policy_name=ace_policy
+  --policy.predictor_remote.chunk_size=50
+  --policy.predictor_remote.n_action_steps=24
+  --policy.predictor_remote.image_key_map='{ right_front: cam_high, left_wrist: cam_left_wrist, right_wrist: cam_right_wrist }'
+  --policy.detector_remote.image_key_map='{ right_front: cam_high, left_wrist: cam_left_wrist, right_wrist: cam_right_wrist }'
+)
+```
+
+The rest of the robot, teleop, dataset, and display arguments can stay the same as the existing HIL script.
