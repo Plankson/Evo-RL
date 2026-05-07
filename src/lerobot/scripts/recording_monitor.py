@@ -189,62 +189,35 @@ class ObservationPool:
                     self._cond.wait(timeout=remaining)
 
 
-class ObservationPoller:
-    def __init__(
-        self,
-        robot: Robot,
-        observation_pool: ObservationPool,
-        detector_source_queue,
-        poll_hz: float,
-    ) -> None:
-        self.robot = robot
-        self.observation_pool = observation_pool
-        self.detector_source_queue = detector_source_queue
-        self.poll_hz = poll_hz
-        self.stop_event = threading.Event()
-        self.thread = threading.Thread(target=self._run, daemon=True, name="observation-poller")
-        self._seq = 0
+def publish_observation_sample(
+    *,
+    observation_pool: ObservationPool,
+    detector_source_queue,
+    seq: int,
+    raw_obs: RobotObservation,
+) -> ObservationSample:
+    sample = ObservationSample(seq=seq, observed_at_s=time.time(), raw_obs=raw_obs)
+    observation_pool.publish(sample)
 
-    def start(self) -> None:
-        self.thread.start()
-
-    def stop(self) -> None:
-        self.stop_event.set()
-        self.thread.join(timeout=1.0)
-
-    def _run(self) -> None:
-        period_s = 0.0 if self.poll_hz <= 0 else 1.0 / self.poll_hz
-        while not self.stop_event.is_set():
-            start_t = time.perf_counter()
+    if detector_source_queue is not None:
+        payload = {
+            "seq": sample.seq,
+            "observed_at_s": sample.observed_at_s,
+            "raw_obs": copy.deepcopy(raw_obs),
+        }
+        try:
+            detector_source_queue.put_nowait(payload)
+        except queue.Full:
             try:
-                raw_obs = self.robot.get_observation()
-                sample = ObservationSample(seq=self._seq, observed_at_s=time.time(), raw_obs=raw_obs)
-                self._seq += 1
-                self.observation_pool.publish(sample)
+                detector_source_queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                detector_source_queue.put_nowait(payload)
+            except queue.Full:
+                pass
 
-                if self.detector_source_queue is not None:
-                    payload = {
-                        "seq": sample.seq,
-                        "observed_at_s": sample.observed_at_s,
-                        "raw_obs": copy.deepcopy(raw_obs),
-                    }
-                    try:
-                        self.detector_source_queue.put_nowait(payload)
-                    except queue.Full:
-                        try:
-                            self.detector_source_queue.get_nowait()
-                        except queue.Empty:
-                            pass
-                        try:
-                            self.detector_source_queue.put_nowait(payload)
-                        except queue.Full:
-                            pass
-            except Exception as exc:
-                logger.error("[OBS_POOL] Error while reading robot observation: %s", exc)
-                time.sleep(0.01)
-
-            if period_s > 0:
-                precise_sleep(max(period_s - (time.perf_counter() - start_t), 0.0))
+    return sample
 
 
 def handle_failure(signal: dict[str, Any]) -> None:
@@ -414,6 +387,13 @@ def record_loop_monitor(
     if intervention_enabled:
         set_teleop_manual_control(False)
 
+    if observation_poll_hz != fps:
+        logger.warning(
+            "`observation_poll_hz` is ignored in stable monitor mode; observations are sampled once per "
+            "control-loop frame at dataset fps=%s to match the normal HIL camera access pattern.",
+            fps,
+        )
+
     # Do not fork after robot/camera connections are live. RealSense cameras run
     # background reader threads, and forking a multithreaded process can corrupt
     # the parent-side camera pipeline even when the child never touches the robot.
@@ -426,12 +406,6 @@ def record_loop_monitor(
     stop_event = ctx.Event()
     shared_danger = ctx.Value("i", 0)
     observation_pool = ObservationPool(max(observation_pool_size, 1))
-    observation_poller = ObservationPoller(
-        robot=robot,
-        observation_pool=observation_pool,
-        detector_source_queue=detector_source_queue,
-        poll_hz=observation_poll_hz,
-    )
     detector_proc = ctx.Process(
         target=detector_process_worker,
         args=(
@@ -482,12 +456,11 @@ def record_loop_monitor(
                     raise
                 time.sleep(min(interval_s if interval_s > 0.0 else remaining_s, remaining_s))
 
-    observation_poller.start()
     detector_proc.start()
     alarm_proc.start()
 
     timestamp = 0.0
-    last_sample_seq = -1
+    sample_seq = 0
     start_episode_t = time.perf_counter()
 
     try:
@@ -519,8 +492,14 @@ def record_loop_monitor(
                 else:
                     logger.info("Intervention toggle ignored because policy+teleop are not both active.")
 
-            sample = observation_pool.latest(min_seq=last_sample_seq, timeout_s=max(1.0 / max(observation_poll_hz, 1.0), 0.1))
-            last_sample_seq = sample.seq
+            raw_obs = robot.get_observation()
+            sample = publish_observation_sample(
+                observation_pool=observation_pool,
+                detector_source_queue=detector_source_queue,
+                seq=sample_seq,
+                raw_obs=raw_obs,
+            )
+            sample_seq += 1
             raw_obs = sample.raw_obs
             obs_processed = robot_observation_processor(raw_obs)
             obs_processed = _convert_joint_positions_deg_to_rad(obs_processed)
@@ -655,6 +634,5 @@ def record_loop_monitor(
             timestamp = time.perf_counter() - start_episode_t
     finally:
         stop_event.set()
-        observation_poller.stop()
         detector_proc.join(timeout=1.0)
         alarm_proc.join(timeout=1.0)

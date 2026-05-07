@@ -20,8 +20,8 @@ bash test_hil_record_monitor.sh
 
 The dedicated monitor recorder uses one shared observation source with two independent consumers:
 
-1. A high-frequency observation poller in the main process calls `robot.get_observation()`.
-2. Each sample is published into an in-memory observation pool.
+1. The main control loop calls `robot.get_observation()` once per recorded frame, matching the normal HIL camera access pattern.
+2. Each raw sample is published into an in-memory observation pool and detector queue.
 3. The predictor samples from that pool, builds predictor-side inputs, and requests action chunks from `predictor_remote`.
 4. The detector process receives the same raw observations from the shared source, builds detector-side inputs independently, and requests safety results from `detector_remote`.
 5. Only frames actually consumed by the predictor/control loop are written into the final episode dataset.
@@ -52,10 +52,11 @@ In practice you will usually also need:
 Optional monitor-recorder-only controls:
 
 ```bash
---observation_poll_hz=<hz>
 --observation_pool_size=<num_samples>
 --detector_queue_size=<num_samples>
 ```
+
+`--observation_poll_hz` is accepted for compatibility but ignored in the stable monitor path. Camera acquisition is intentionally kept in the main control loop because the RealSense backend uses background threads, and moving `robot.get_observation()` into an extra recorder-owned thread can destabilize the live camera pipeline.
 
 If predictor and detector require different payload mappings, set them separately under their own nested prefixes. For example:
 

@@ -40,7 +40,7 @@ from lerobot.utils.visualization_utils import init_rerun
 
 @dataclass
 class MonitorRecordConfig(RecordConfig):
-    observation_poll_hz: float = 1.0
+    observation_poll_hz: float = 30
     observation_pool_size: int = 256
     detector_queue_size: int = 8
 
