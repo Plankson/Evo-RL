@@ -63,7 +63,7 @@ class RemoteMonitorPolicy(PreTrainedPolicy):
         }
         
         # Extract actions
-        expected_dim = self.config.predictor_remote.output_features.get(ACTION, None)
+        expected_dim = self.config.output_features.get(ACTION, None)
         if expected_dim: expected_dim = expected_dim.shape[0]
         
         action_chunk = normalize_remote_action_chunk(
