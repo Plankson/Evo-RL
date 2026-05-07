@@ -13,7 +13,7 @@ class MsgpackNumpy:
 
     @staticmethod
     def packb(obj: Any) -> bytes:
-        def encode(o):
+        def normalize(o: Any) -> Any:
             if isinstance(o, np.ndarray):
                 return {
                     "__nd__": True,
@@ -21,9 +21,13 @@ class MsgpackNumpy:
                     "shape": list(o.shape),
                     "data": o.tobytes(),
                 }
+            if isinstance(o, dict):
+                return {k: normalize(v) for k, v in o.items()}
+            if isinstance(o, (list, tuple)):
+                return [normalize(v) for v in o]
             return o
 
-        return umsgpack.packb(obj, default=encode)
+        return umsgpack.packb(normalize(obj))
 
     @staticmethod
     def unpackb(data: bytes) -> Any:
