@@ -122,7 +122,6 @@ args=(
   --teleop.left_arm_config.require_calibration=false
   --teleop.right_arm_config.require_calibration=false
   --policy.type=remote_monitor
-  --use_monitor=true
   --dataset.repo_id="${DATASET_REPO_ID}"
   --dataset.root="${DATASET_ROOT}"
   --dataset.single_task="${PROMPT}"
@@ -141,4 +140,4 @@ args=(
   --policy.predictor_remote.n_action_steps=24
 )
 
-lerobot-human-inloop-record "${args[@]}"
+lerobot-human-inloop-record-monitor "${args[@]}"
