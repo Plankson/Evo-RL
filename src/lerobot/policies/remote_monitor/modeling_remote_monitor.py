@@ -1,6 +1,8 @@
 import logging
 from collections import deque
 from typing import Dict, Any, Optional
+
+import websockets.sync.client
 import torch
 
 from lerobot.policies.pretrained import PreTrainedPolicy, ActionSelectKwargs
@@ -12,6 +14,49 @@ from lerobot.utils.constants import ACTION
 from .configuration_remote_monitor import RemoteMonitorConfig
 
 logger = logging.getLogger(__name__)
+
+
+class OpenPiWebsocketClientNoMetadata:
+    """OpenPI-compatible websocket client for servers without startup metadata."""
+
+    def __init__(self, host: str = "0.0.0.0", port: int | None = None, api_key: str | None = None) -> None:
+        if host.startswith("ws"):
+            self._uri = host
+        else:
+            self._uri = f"ws://{host}"
+        if port is not None:
+            self._uri += f":{port}"
+
+        from openpi_client import msgpack_numpy
+
+        self._packer = msgpack_numpy.Packer()
+        self._unpackb = msgpack_numpy.unpackb
+        self._api_key = api_key
+        self._ws = None
+
+    def _connect(self) -> None:
+        headers = {"Authorization": f"Api-Key {self._api_key}"} if self._api_key else None
+        logger.info("Connecting to server at %s without startup metadata handshake...", self._uri)
+        self._ws = websockets.sync.client.connect(
+            self._uri,
+            compression=None,
+            max_size=None,
+            additional_headers=headers,
+        )
+
+    def infer(self, obs: Dict) -> Dict:
+        if self._ws is None:
+            self._connect()
+
+        self._ws.send(self._packer.pack(obs))
+        response = self._ws.recv()
+        if isinstance(response, str):
+            raise RuntimeError(f"Error in inference server:\n{response}")
+        return self._unpackb(response)
+
+    def reset(self) -> None:
+        pass
+
 
 class RemoteMonitorPolicy(PreTrainedPolicy):
     """
@@ -29,23 +74,30 @@ class RemoteMonitorPolicy(PreTrainedPolicy):
         self.detector_client = None
         self.last_predictor_safety: Optional[Dict[str, Any]] = None
 
-    def _make_client(self, endpoint_config):
+    def _make_predictor_client(self):
         from openpi_client.websocket_client_policy import WebsocketClientPolicy
 
         return WebsocketClientPolicy(
-            host=endpoint_config.host,
-            port=endpoint_config.port,
-            api_key=endpoint_config.api_key,
+            host=self.config.predictor_remote.host,
+            port=self.config.predictor_remote.port,
+            api_key=self.config.predictor_remote.api_key,
+        )
+
+    def _make_detector_client(self):
+        return OpenPiWebsocketClientNoMetadata(
+            host=self.config.detector_remote.host,
+            port=self.config.detector_remote.port,
+            api_key=self.config.detector_remote.api_key,
         )
 
     def _get_predictor_client(self):
         if self.predictor_client is None:
-            self.predictor_client = self._make_client(self.config.predictor_remote)
+            self.predictor_client = self._make_predictor_client()
         return self.predictor_client
 
     def _get_detector_client(self):
         if self.detector_client is None:
-            self.detector_client = self._make_client(self.config.detector_remote)
+            self.detector_client = self._make_detector_client()
         return self.detector_client
 
     def reset(self):
