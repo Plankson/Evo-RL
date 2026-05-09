@@ -14,6 +14,7 @@ from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.processor import make_default_processors
 from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import make_robot_from_config
+from lerobot.robots.robot_io import RobotIOClient
 from lerobot.scripts.recording_hil import PolicySyncDualArmExecutor
 from lerobot.scripts.hdf5_episode_recorder import HDF5EpisodeRecorder
 from lerobot.scripts.lerobot_human_inloop_record import _HumanInloopFailureResetController
@@ -43,6 +44,11 @@ class MonitorRecordConfig(RecordConfig):
     observation_poll_hz: float = 30
     observation_pool_size: int = 256
     detector_queue_size: int = 1
+    distributed_robot_io: bool = False
+    robot_io_obs_address: str = "tcp://127.0.0.1:5555"
+    robot_io_action_address: str = "tcp://127.0.0.1:5556"
+    robot_io_meta_address: str = "tcp://127.0.0.1:5557"
+    robot_io_obs_timeout_s: float = 5.0
 
     def __post_init__(self):
         super().__post_init__()
@@ -102,7 +108,17 @@ def human_inloop_record_monitor(cfg: MonitorRecordConfig):
         else cfg.display_compressed_images
     )
 
-    robot = make_robot_from_config(cfg.robot)
+    if cfg.distributed_robot_io:
+        logging.info("Distributed robot IO enabled for monitor client.")
+        robot = RobotIOClient(
+            observation_address=cfg.robot_io_obs_address,
+            action_address=cfg.robot_io_action_address,
+            metadata_address=cfg.robot_io_meta_address,
+            observation_timeout_s=cfg.robot_io_obs_timeout_s,
+        )
+    else:
+        logging.info("Distributed robot IO disabled; using local hardware robot.")
+        robot = make_robot_from_config(cfg.robot)
     teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
