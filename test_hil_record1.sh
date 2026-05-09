@@ -9,9 +9,9 @@ PROMPT="fold clothes"
 # PROMPT="put the cubes into bucket"
 # PROMPT="wipe the table with the towel"
 # PROMPT="put the pen into the pen holder"
-#PROMPT="put the cubes into bucket"
+PROMPT="put the cubes into bucket"
 #PROMPT="pour water from one cup into another cup"
-PROMPT="put the pen into the pen holder"
+#PROMPT="put the pen into th/e pen holder"
 #wipe the table with the towel
 #bag items into paper bag
 #push objects with marker
