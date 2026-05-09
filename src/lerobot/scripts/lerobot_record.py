@@ -62,7 +62,9 @@ lerobot-record \
 ```
 """
 
+import json
 import logging
+import time
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -142,6 +144,48 @@ from lerobot.utils.utils import (
     log_say,
 )
 from lerobot.utils.visualization_utils import init_rerun
+
+
+def _extract_joint_pos_from_observation(observation: dict) -> dict[str, float]:
+    return {key: float(value) for key, value in observation.items() if key.endswith(".pos")}
+
+
+def _load_policy_only_reset_pose(pose_path: Path) -> dict[str, float]:
+    with open(pose_path) as f:
+        payload = json.load(f)
+    joint_pos_raw = payload["joint_pos"] if isinstance(payload, dict) and "joint_pos" in payload else payload
+    if not isinstance(joint_pos_raw, dict):
+        raise ValueError(f"Invalid reset pose payload in {pose_path}: expected dict, got {type(joint_pos_raw)}")
+
+    joint_pos = {str(key): float(value) for key, value in joint_pos_raw.items() if str(key).endswith(".pos")}
+    if not joint_pos:
+        raise ValueError(f"Invalid reset pose payload in {pose_path}: no '.pos' joints found.")
+    return joint_pos
+
+
+def _slow_move_robot_to_pose(robot, target_pose: dict[str, float], duration_s: float) -> None:
+    joint_keys = [key for key in robot.action_features if key.endswith(".pos") and key in target_pose]
+    if not joint_keys:
+        logging.warning("No matching '.pos' joints found for policy-only reset pose.")
+        return
+
+    current_pose = _extract_joint_pos_from_observation(robot.get_observation())
+    start_pose = {key: current_pose.get(key, float(target_pose[key])) for key in joint_keys}
+    goal_pose = {key: float(target_pose[key]) for key in joint_keys}
+
+    if all(abs(start_pose[key] - goal_pose[key]) < 1e-6 for key in joint_keys):
+        logging.info("Robot is already at the policy-only reset pose.")
+        return
+
+    step_dt_s = 0.05
+    steps = max(int(duration_s / step_dt_s), 1)
+    for idx in range(1, steps + 1):
+        alpha = idx / steps
+        action = {key: start_pose[key] + (goal_pose[key] - start_pose[key]) * alpha for key in joint_keys}
+        robot.send_action(action)
+        time.sleep(step_dt_s)
+
+    logging.info("Robot returned to the policy-only reset pose in %.1fs.", duration_s)
 
 
 @dataclass
@@ -243,6 +287,10 @@ class RecordConfig:
     communication_retry_timeout_s: float = 2.0
     # Sleep interval between communication retries (seconds).
     communication_retry_interval_s: float = 0.1
+    # Optional reset pose for policy-only recording. Used only when policy is set and teleop is absent.
+    policy_only_reset_pose_path: Path | None = None
+    # Duration for moving to policy_only_reset_pose_path.
+    policy_only_reset_duration_s: float = 10.0
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
@@ -437,6 +485,16 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         if callable(on_record_connected):
             on_record_connected(robot, teleop)
 
+        policy_only_reset_pose = None
+        if cfg.policy_only_reset_pose_path is not None:
+            if cfg.teleop is not None or cfg.policy is None:
+                logging.info(
+                    "`policy_only_reset_pose_path` is ignored because this is not policy-only recording."
+                )
+            else:
+                policy_only_reset_pose = _load_policy_only_reset_pose(cfg.policy_only_reset_pose_path)
+                logging.info("Loaded policy-only reset pose from %s", cfg.policy_only_reset_pose_path)
+
         if cfg.policy_sync_to_teleop:
             if cfg.policy is None:
                 raise ValueError("`policy_sync_to_teleop=true` requires `policy` to be set.")
@@ -465,6 +523,12 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 before_record_episode = getattr(cfg, "_before_record_episode", None)
                 if callable(before_record_episode):
                     before_record_episode(robot, teleop, recorded_episodes)
+                elif policy_only_reset_pose is not None:
+                    _slow_move_robot_to_pose(
+                        robot=robot,
+                        target_pose=policy_only_reset_pose,
+                        duration_s=cfg.policy_only_reset_duration_s,
+                    )
                 record_loop(
                     robot=robot,
                     events=events,
@@ -523,6 +587,12 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 on_episode_outcome = getattr(cfg, "_on_record_episode_outcome", None)
                 if callable(on_episode_outcome):
                     on_episode_outcome(robot, teleop, episode_success)
+                elif policy_only_reset_pose is not None:
+                    _slow_move_robot_to_pose(
+                        robot=robot,
+                        target_pose=policy_only_reset_pose,
+                        duration_s=cfg.policy_only_reset_duration_s,
+                    )
 
                 skip_manual_reset_loop = bool(getattr(cfg, "_skip_reset_time_loop", False))
 
@@ -617,4 +687,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

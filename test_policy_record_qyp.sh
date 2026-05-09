@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 lerobot-setup-can --mode=setup --interfaces=can_left,can_right
 
 # PROMPT="wipe the table with the towel"
@@ -20,6 +22,7 @@ PORT=9991
 # PORT=8080
 TAG="policy_only"
 TESTMODE="true"
+RESET_POSE_PATH="${SCRIPT_DIR}/reset_state/reset.json"
 
 for arg in "$@"; do
   case "$arg" in
@@ -97,6 +100,8 @@ args=(
   --dataset.episode_time_s=200
   --dataset.reset_time_s=0
   --dataset.push_to_hub=false
+  --policy_only_reset_pose_path="${RESET_POSE_PATH}"
+  --policy_only_reset_duration_s=5
   --display_data=true
   --play_sounds=false
   --test_mode="${TESTMODE}"

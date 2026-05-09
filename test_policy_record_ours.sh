@@ -18,7 +18,8 @@ PROMPT="PUT THE CUBES INTO BUCKET"
 
 POLICY_NAME="pi0"
 # POLICY_NAME="ace_policy"
-PORT=9991
+POLICY_NAME="ace_policy"
+PORT=3336
 # PORT=8080
 TAG="policy_only"
 TESTMODE="true"
