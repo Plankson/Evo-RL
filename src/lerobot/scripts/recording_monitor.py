@@ -7,8 +7,10 @@ import logging
 import math
 import multiprocessing
 import queue
+import threading
 import time
 from collections import deque
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -38,6 +40,7 @@ from lerobot.scripts.recording_hil import (
     _capture_policy_runtime_state,
     _predict_policy_action_with_runtime_state,
 )
+from lerobot.scripts.local_detector_runtime import LocalDetectorConfig, LocalOpenPIDetectorRuntime
 from lerobot.teleoperators import Teleoperator, koch_leader, omx_leader, so_leader
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
 from lerobot.utils.constants import ACTION, OBS_STR
@@ -243,6 +246,60 @@ def detector_process_worker(
         logger.error("[DETECTOR] Fatal error: %s", exc)
 
 
+def detector_local_worker(
+    observation_queue,
+    local_detector_config: LocalDetectorConfig,
+    robot_observation_processor: RobotProcessorPipeline[RobotObservation, RobotObservation],
+    dataset_features: dict[str, Any],
+    task: str | None,
+    robot_type: str | None,
+    signal_queue,
+    stop_event,
+    history_size: int,
+) -> None:
+    logger.info("[DETECTOR-LOCAL] Worker started.")
+    detector_runtime = LocalOpenPIDetectorRuntime(local_detector_config)
+    history: deque[dict[str, Any]] = deque(maxlen=history_size)
+    device = get_safe_torch_device("cpu")
+
+    try:
+        while not stop_event.is_set():
+            try:
+                item = observation_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+
+            try:
+                history.append(item)
+                latest = history[-1]
+                raw_obs = latest["raw_obs"]
+                obs_processed = robot_observation_processor(raw_obs)
+                obs_processed = _convert_joint_positions_deg_to_rad(obs_processed)
+                observation_frame = build_dataset_frame(dataset_features, obs_processed, prefix=OBS_STR)
+                batch = prepare_observation_for_inference(
+                    copy.deepcopy(observation_frame),
+                    device,
+                    task,
+                    robot_type,
+                )
+                detector_obs = batch_to_client_observation(batch, local_detector_config)  # type: ignore[arg-type]
+                result = detector_runtime.infer(detector_obs)
+                signal_queue.put(
+                    {
+                        "source": "detector",
+                        "is_dangerous": result.get("is_dangerous", False),
+                        "score": result.get("score", 0.0),
+                        "timestamp": time.time(),
+                        "source_seq": latest["seq"],
+                    }
+                )
+            except Exception as exc:
+                logger.error("[DETECTOR-LOCAL] Error in background loop: %s", exc)
+                time.sleep(0.01)
+    except Exception as exc:
+        logger.error("[DETECTOR-LOCAL] Fatal error: %s", exc)
+
+
 def alarm_poller_worker(signal_queue, shared_danger, stop_event) -> None:
     logger.info("[ALARM] Poller started.")
     while not stop_event.is_set():
@@ -289,6 +346,8 @@ def record_loop_monitor(
     acp_inference: ACPInferenceConfig | None = None,
     communication_retry_timeout_s: float = 2.0,
     communication_retry_interval_s: float = 0.1,
+    detector_mode: str = "remote",
+    local_detector_config: LocalDetectorConfig | None = None,
 ):
     if acp_inference is None:
         acp_inference = ACPInferenceConfig()
@@ -362,38 +421,77 @@ def record_loop_monitor(
             fps,
         )
 
-    # Do not fork after robot/camera connections are live. RealSense cameras run
-    # background reader threads, and forking a multithreaded process can corrupt
-    # the parent-side camera pipeline even when the child never touches the robot.
-    if "spawn" in multiprocessing.get_all_start_methods():
-        ctx = multiprocessing.get_context("spawn")
+    use_local_detector = detector_mode == "local"
+    if detector_mode not in {"remote", "local"}:
+        raise ValueError(f"Unsupported detector_mode={detector_mode}")
+
+    if use_local_detector:
+        if local_detector_config is None:
+            raise ValueError("local_detector_config must be provided when detector_mode='local'")
+        detector_source_queue = queue.Queue(maxsize=max(detector_queue_size, 1))
+        signal_queue = queue.Queue()
+        stop_event = threading.Event()
+
+        @dataclass
+        class _DangerState:
+            value: int = 0
+
+        shared_danger = _DangerState(0)
+        detector_proc = threading.Thread(
+            target=detector_local_worker,
+            args=(
+                detector_source_queue,
+                local_detector_config,
+                robot_observation_processor,
+                dataset.features,
+                single_task,
+                robot.robot_type,
+                signal_queue,
+                stop_event,
+                max(observation_pool_size, 1),
+            ),
+            daemon=True,
+            name="detector-local-thread",
+        )
+        alarm_proc = threading.Thread(
+            target=alarm_poller_worker,
+            args=(signal_queue, shared_danger, stop_event),
+            daemon=True,
+            name="alarm-poller-thread",
+        )
     else:
-        ctx = multiprocessing
-    detector_source_queue = ctx.Queue(maxsize=max(detector_queue_size, 1))
-    signal_queue = ctx.Queue()
-    stop_event = ctx.Event()
-    shared_danger = ctx.Value("i", 0)
-    detector_proc = ctx.Process(
-        target=detector_process_worker,
-        args=(
-            detector_source_queue,
-            policy.config.detector_remote,
-            policy.config.device,
-            robot_observation_processor,
-            dataset.features,
-            single_task,
-            robot.robot_type,
-            signal_queue,
-            stop_event,
-            max(observation_pool_size, 1),
-        ),
-        daemon=False,
-    )
-    alarm_proc = ctx.Process(
-        target=alarm_poller_worker,
-        args=(signal_queue, shared_danger, stop_event),
-        daemon=False,
-    )
+        # Do not fork after robot/camera connections are live. RealSense cameras run
+        # background reader threads, and forking a multithreaded process can corrupt
+        # the parent-side camera pipeline even when the child never touches the robot.
+        if "spawn" in multiprocessing.get_all_start_methods():
+            ctx = multiprocessing.get_context("spawn")
+        else:
+            ctx = multiprocessing
+        detector_source_queue = ctx.Queue(maxsize=max(detector_queue_size, 1))
+        signal_queue = ctx.Queue()
+        stop_event = ctx.Event()
+        shared_danger = ctx.Value("i", 0)
+        detector_proc = ctx.Process(
+            target=detector_process_worker,
+            args=(
+                detector_source_queue,
+                policy.config.detector_remote,
+                policy.config.device,
+                robot_observation_processor,
+                dataset.features,
+                single_task,
+                robot.robot_type,
+                signal_queue,
+                stop_event,
+                max(observation_pool_size, 1),
+            ),
+            daemon=False,
+        )
+        alarm_proc = ctx.Process(
+            target=alarm_poller_worker,
+            args=(signal_queue, shared_danger, stop_event),
+            daemon=False,
+        )
 
     def run_with_connection_retry(action_name: str, fn):
         timeout_s = max(communication_retry_timeout_s, 0.0)
@@ -602,9 +700,9 @@ def record_loop_monitor(
         stop_event.set()
         detector_proc.join(timeout=2.0)
         alarm_proc.join(timeout=2.0)
-        if detector_proc.is_alive():
+        if not use_local_detector and detector_proc.is_alive():
             detector_proc.terminate()
             detector_proc.join(timeout=2.0)
-        if alarm_proc.is_alive():
+        if not use_local_detector and alarm_proc.is_alive():
             alarm_proc.terminate()
             alarm_proc.join(timeout=2.0)
