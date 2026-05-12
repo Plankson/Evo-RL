@@ -18,31 +18,21 @@ from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import make_robot_from_config
 from lerobot.robots.robot_io import RobotIOClient
 from lerobot.scripts.hdf5_episode_recorder import HDF5EpisodeRecorder
-from lerobot.scripts.lerobot_human_inloop_record import _HumanInloopFailureResetController
 from lerobot.scripts.lerobot_record import RecordConfig
 from lerobot.scripts.local_detector_runtime import LocalDetectorConfig, validate_local_detector_paths
 from lerobot.scripts.recording_hil import PolicySyncDualArmExecutor
 from lerobot.scripts.recording_monitor import record_loop_monitor
 from lerobot.teleoperators import make_teleoperator_from_config
 from lerobot.utils.constants import ACTION
-from lerobot.utils.control_utils import (
-    init_keyboard_listener,
-    sanity_check_dataset_name,
-    sanity_check_dataset_robot_compatibility,
-)
+from lerobot.utils.control_utils import init_keyboard_listener, sanity_check_dataset_name, sanity_check_dataset_robot_compatibility
 from lerobot.utils.import_utils import register_third_party_plugins
-from lerobot.utils.recording_annotations import (
-    infer_collector_policy_id,
-    infer_collector_policy_version,
-    normalize_episode_success_label,
-    resolve_episode_success_label,
-)
+from lerobot.utils.recording_annotations import infer_collector_policy_id, normalize_episode_success_label, resolve_episode_success_label
 from lerobot.utils.utils import init_logging, log_say
 from lerobot.utils.visualization_utils import init_rerun
 
 
 @dataclass
-class MonitorLocalDetectorRecordConfig(RecordConfig):
+class RecordMonitorLocalDetectorConfig(RecordConfig):
     observation_poll_hz: float = 30
     observation_pool_size: int = 256
     detector_queue_size: int = 1
@@ -65,7 +55,7 @@ class MonitorLocalDetectorRecordConfig(RecordConfig):
         super().__post_init__()
         if self.policy is None or self.policy.type != "remote_monitor":
             raise ValueError(
-                "`lerobot-human-inloop-record-monitor-local-detector` requires `--policy.type=remote_monitor`."
+                "`lerobot-record-monitor-local-detector` requires `--policy.type=remote_monitor`."
             )
         if self.observation_poll_hz <= 0:
             raise ValueError("`observation_poll_hz` must be > 0.")
@@ -76,39 +66,14 @@ class MonitorLocalDetectorRecordConfig(RecordConfig):
 
 
 @parser.wrap()
-def human_inloop_record_monitor_local_detector(cfg: MonitorLocalDetectorRecordConfig):
-    if cfg.teleop is None:
-        raise ValueError("This script requires `teleop` config.")
-
+def record_monitor_local_detector(cfg: RecordMonitorLocalDetectorConfig) -> LeRobotDataset:
+    init_logging()
     validate_local_detector_paths(cfg.local_detector)
 
-    cfg._save_hdf5_episodes = True
-    cfg.policy_sync_to_teleop = True
-    cfg.intervention_state_machine_enabled = True
-    cfg.enable_episode_outcome_labeling = True
-    cfg.default_episode_success = None
-    cfg.require_episode_success_label = True
-    cfg.enable_collector_policy_id = True
-    if cfg.collector_policy_id_policy is None:
-        cfg.collector_policy_id_policy = infer_collector_policy_version(cfg.policy)
+    if cfg.require_episode_success_label and not cfg.enable_episode_outcome_labeling:
+        raise ValueError("`require_episode_success_label=true` requires `enable_episode_outcome_labeling=true`.")
 
-    failure_reset_controller = _HumanInloopFailureResetController(cfg)
-    cfg._on_record_connected = failure_reset_controller.on_record_connected
-    cfg._on_record_episode_outcome = failure_reset_controller.on_episode_outcome
-    cfg._before_record_episode = failure_reset_controller.before_record_episode
-    cfg._skip_reset_time_loop = True
-
-    init_logging()
-    logging.info(
-        "Local-detector monitor recording enabled. ACP inference: enable=%s use_cfg=%s cfg_beta=%.3f. "
-        "Observation poll hz=%.1f pool_size=%d detector_queue_size=%d.",
-        cfg.acp_inference.enable,
-        cfg.acp_inference.use_cfg,
-        cfg.acp_inference.cfg_beta,
-        cfg.observation_poll_hz,
-        cfg.observation_pool_size,
-        cfg.detector_queue_size,
-    )
+    logging.info("Monitor recording with local detector enabled (teleop optional).")
     logging.info(pformat(asdict(cfg)))
 
     if cfg.display_data:
@@ -120,7 +85,6 @@ def human_inloop_record_monitor_local_detector(cfg: MonitorLocalDetectorRecordCo
     )
 
     if cfg.distributed_robot_io:
-        logging.info("Distributed robot IO enabled for monitor client.")
         robot = RobotIOClient(
             observation_address=cfg.robot_io_obs_address,
             action_address=cfg.robot_io_action_address,
@@ -128,7 +92,6 @@ def human_inloop_record_monitor_local_detector(cfg: MonitorLocalDetectorRecordCo
             observation_timeout_s=cfg.robot_io_obs_timeout_s,
         )
     else:
-        logging.info("Distributed robot IO disabled; using local hardware robot.")
         robot = make_robot_from_config(cfg.robot)
 
     teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
@@ -146,28 +109,32 @@ def human_inloop_record_monitor_local_detector(cfg: MonitorLocalDetectorRecordCo
             use_videos=cfg.dataset.video,
         ),
     )
-    action_names = dataset_features[ACTION]["names"]
-    action_names = list(robot.action_features) if action_names is None else list(action_names)
-    dataset_features["complementary_info.policy_action"] = {
-        "dtype": "float32",
-        "shape": (len(action_names),),
-        "names": action_names,
-    }
-    dataset_features["complementary_info.is_intervention"] = {
-        "dtype": "float32",
-        "shape": (1,),
-        "names": ["is_intervention"],
-    }
-    dataset_features["complementary_info.state"] = {
-        "dtype": "float32",
-        "shape": (1,),
-        "names": ["state"],
-    }
-    dataset_features["complementary_info.collector_policy_id"] = {
-        "dtype": "string",
-        "shape": (1,),
-        "names": ["collector_policy_id"],
-    }
+
+    if cfg.intervention_state_machine_enabled and cfg.policy is not None and cfg.teleop is not None:
+        action_names = dataset_features[ACTION]["names"]
+        action_names = list(robot.action_features) if action_names is None else list(action_names)
+        dataset_features["complementary_info.policy_action"] = {
+            "dtype": "float32",
+            "shape": (len(action_names),),
+            "names": action_names,
+        }
+        dataset_features["complementary_info.is_intervention"] = {
+            "dtype": "float32",
+            "shape": (1,),
+            "names": ["is_intervention"],
+        }
+        dataset_features["complementary_info.state"] = {
+            "dtype": "float32",
+            "shape": (1,),
+            "names": ["state"],
+        }
+
+    if cfg.enable_collector_policy_id:
+        dataset_features["complementary_info.collector_policy_id"] = {
+            "dtype": "string",
+            "shape": (1,),
+            "names": ["collector_policy_id"],
+        }
 
     dataset = None
     listener = None
@@ -176,7 +143,7 @@ def human_inloop_record_monitor_local_detector(cfg: MonitorLocalDetectorRecordCo
 
     try:
         if use_hdf5_episode_recorder:
-            camera_name_map = getattr(cfg.policy.predictor_remote, "image_key_map", None)
+            camera_name_map = getattr(cfg.policy, "image_key_map", None) if cfg.policy is not None else None
             dataset = HDF5EpisodeRecorder(
                 repo_id=cfg.dataset.repo_id,
                 fps=cfg.dataset.fps,
@@ -214,16 +181,21 @@ def human_inloop_record_monitor_local_detector(cfg: MonitorLocalDetectorRecordCo
                     vcodec=cfg.dataset.vcodec,
                 )
 
-        policy = make_policy(cfg.policy, ds_meta=dataset.meta)
-        preprocessor, postprocessor = make_pre_post_processors(
-            policy_cfg=cfg.policy,
-            pretrained_path=cfg.policy.pretrained_path,
-            dataset_stats=rename_stats(dataset.meta.stats, cfg.dataset.rename_map),
-            preprocessor_overrides={
-                "device_processor": {"device": cfg.policy.device},
-                "rename_observations_processor": {"rename_map": cfg.dataset.rename_map},
-            },
-        )
+        policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
+        preprocessor = None
+        postprocessor = None
+        if cfg.acp_inference.enable and cfg.policy is None:
+            raise ValueError("`acp_inference.enable=true` requires `policy` to be set.")
+        if cfg.policy is not None:
+            preprocessor, postprocessor = make_pre_post_processors(
+                policy_cfg=cfg.policy,
+                pretrained_path=cfg.policy.pretrained_path,
+                dataset_stats=rename_stats(dataset.meta.stats, cfg.dataset.rename_map),
+                preprocessor_overrides={
+                    "device_processor": {"device": cfg.policy.device},
+                    "rename_observations_processor": {"rename_map": cfg.dataset.rename_map},
+                },
+            )
 
         collector_policy_id_policy = (
             cfg.collector_policy_id_policy
@@ -235,21 +207,24 @@ def human_inloop_record_monitor_local_detector(cfg: MonitorLocalDetectorRecordCo
         robot.connect()
         if teleop is not None:
             teleop.connect()
-        if callable(getattr(cfg, "_on_record_connected", None)):
-            cfg._on_record_connected(robot, teleop)
 
-        if teleop is None or isinstance(teleop, list):
-            raise ValueError("This script requires exactly one teleoperator with send_feedback support.")
-        policy_sync_executor = PolicySyncDualArmExecutor(
-            robot=robot,
-            teleop=teleop,
-            parallel_dispatch=cfg.policy_sync_parallel,
-        )
+        if cfg.policy_sync_to_teleop:
+            if cfg.policy is None:
+                raise ValueError("`policy_sync_to_teleop=true` requires `policy` to be set.")
+            if teleop is None or isinstance(teleop, list):
+                raise ValueError(
+                    "`policy_sync_to_teleop=true` requires exactly one teleoperator with send_feedback support."
+                )
+            policy_sync_executor = PolicySyncDualArmExecutor(
+                robot=robot,
+                teleop=teleop,
+                parallel_dispatch=cfg.policy_sync_parallel,
+            )
 
         listener, events = init_keyboard_listener(
             intervention_toggle_key=cfg.intervention_toggle_key,
-            episode_success_key=cfg.episode_success_key,
-            episode_failure_key=cfg.episode_failure_key,
+            episode_success_key=cfg.episode_success_key if cfg.enable_episode_outcome_labeling else None,
+            episode_failure_key=cfg.episode_failure_key if cfg.enable_episode_outcome_labeling else None,
         )
 
         dataset_context = nullcontext() if use_hdf5_episode_recorder else VideoEncodingManager(dataset)
@@ -258,8 +233,6 @@ def human_inloop_record_monitor_local_detector(cfg: MonitorLocalDetectorRecordCo
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
                 events["episode_outcome"] = None
                 log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
-                if callable(getattr(cfg, "_before_record_episode", None)):
-                    cfg._before_record_episode(robot, teleop, recorded_episodes)
 
                 record_loop_monitor(
                     robot=robot,
@@ -292,39 +265,82 @@ def human_inloop_record_monitor_local_detector(cfg: MonitorLocalDetectorRecordCo
                     local_detector_episode_index=dataset.num_episodes,
                 )
 
-                if events.get("stop_recording"):
+                if events["stop_recording"]:
+                    logging.info(
+                        "Stop recording requested; discarding buffered frames for episode %s without saving.",
+                        dataset.num_episodes,
+                    )
+                    dataset.clear_episode_buffer()
                     break
 
-                episode_outcome = resolve_episode_success_label(
-                    events,
-                    default_label=normalize_episode_success_label(cfg.default_episode_success),
-                    require_explicit_label=cfg.require_episode_success_label,
-                )
-                if episode_outcome is None:
-                    log_say("Episode label missing, retrying this episode.", cfg.play_sounds)
-                    continue
-                if callable(getattr(cfg, "_on_record_episode_outcome", None)):
-                    cfg._on_record_episode_outcome(robot, teleop, episode_outcome)
+                episode_success = None
+                if cfg.enable_episode_outcome_labeling:
+                    episode_success = resolve_episode_success_label(
+                        explicit_label=events.get("episode_outcome"),
+                        default_label=cfg.default_episode_success,
+                        require_label=cfg.require_episode_success_label,
+                    )
 
-                if episode_outcome:
-                    dataset.save_episode(task=cfg.dataset.single_task)
-                    recorded_episodes += 1
-                else:
+                if cfg.enable_episode_outcome_labeling and episode_success is None:
+                    logging.info(
+                        "Episode %s has no explicit success/failure label; discarding buffered frames.",
+                        dataset.num_episodes,
+                    )
                     dataset.clear_episode_buffer()
+                    continue
+
+                if events["rerecord_episode"]:
+                    log_say("Re-record episode", cfg.play_sounds)
+                    events["rerecord_episode"] = False
+                    events["exit_early"] = False
+                    events["episode_outcome"] = None
+                    dataset.clear_episode_buffer()
+                    continue
+
+                if cfg.test_mode:
+                    logging.info(
+                        "Test mode enabled; discarding buffered frames for episode %s without saving.",
+                        dataset.num_episodes,
+                    )
+                    dataset.clear_episode_buffer()
+                else:
+                    extra_episode_metadata = (
+                        {"episode_success": episode_success} if cfg.enable_episode_outcome_labeling else None
+                    )
+                    dataset.save_episode(extra_episode_metadata=extra_episode_metadata)
+                recorded_episodes += 1
 
     finally:
-        if listener is not None:
-            listener.stop()
+        log_say("Stop recording", cfg.play_sounds, blocking=True)
+
+        if dataset:
+            dataset.finalize()
+
         if policy_sync_executor is not None:
             policy_sync_executor.shutdown()
-        if teleop is not None:
+
+        if robot.is_connected:
+            robot.disconnect()
+        if teleop and teleop.is_connected:
             teleop.disconnect()
-        robot.disconnect()
+
+        if listener and hasattr(listener, "stop"):
+            listener.stop()
+
+        if cfg.dataset.push_to_hub and use_hdf5_episode_recorder:
+            logging.warning("Ignoring `dataset.push_to_hub=true` because HDF5 episode saving is enabled.")
+        elif cfg.dataset.push_to_hub:
+            if dataset is not None:
+                dataset.push_to_hub(tags=cfg.dataset.tags, private=cfg.dataset.private)
+
+        log_say("Exiting", cfg.play_sounds)
+
+    return dataset
 
 
-def main() -> None:
+def main():
     register_third_party_plugins()
-    human_inloop_record_monitor_local_detector()
+    record_monitor_local_detector()
 
 
 if __name__ == "__main__":

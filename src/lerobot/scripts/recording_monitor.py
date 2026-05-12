@@ -40,7 +40,12 @@ from lerobot.scripts.recording_hil import (
     _capture_policy_runtime_state,
     _predict_policy_action_with_runtime_state,
 )
-from lerobot.scripts.local_detector_runtime import LocalDetectorConfig, LocalOpenPIDetectorRuntime
+from lerobot.scripts.local_detector_runtime import (
+    LocalDetectorConfig,
+    LocalOpenPIDetectorRuntime,
+    extract_episode_frame_for_visualization,
+    render_detector_episode_async,
+)
 from lerobot.teleoperators import Teleoperator, koch_leader, omx_leader, so_leader
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
 from lerobot.utils.constants import ACTION, OBS_STR
@@ -256,11 +261,13 @@ def detector_local_worker(
     signal_queue,
     stop_event,
     history_size: int,
+    episode_index: int,
 ) -> None:
     logger.info("[DETECTOR-LOCAL] Worker started.")
     detector_runtime = LocalOpenPIDetectorRuntime(local_detector_config)
     history: deque[dict[str, Any]] = deque(maxlen=history_size)
     device = get_safe_torch_device("cpu")
+    episode_records: list[dict[str, Any]] = []
 
     try:
         while not stop_event.is_set():
@@ -284,6 +291,20 @@ def detector_local_worker(
                 )
                 detector_obs = batch_to_client_observation(batch, local_detector_config)  # type: ignore[arg-type]
                 result = detector_runtime.infer(detector_obs)
+                frame = extract_episode_frame_for_visualization(detector_obs)
+                episode_records.append(
+                    {
+                        "frame": frame,
+                        "score": result.get("score", 0.0),
+                        "threshold": result.get("threshold", 0.0),
+                        "is_dangerous": result.get("is_dangerous", False),
+                        "title": (
+                            f"detector t={result.get('timestep', 0)} "
+                            f"score={float(result.get('score', 0.0)):.4f} "
+                            f"band={float(result.get('threshold', 0.0)):.4f}"
+                        ),
+                    }
+                )
                 signal_queue.put(
                     {
                         "source": "detector",
@@ -298,6 +319,12 @@ def detector_local_worker(
                 time.sleep(0.01)
     except Exception as exc:
         logger.error("[DETECTOR-LOCAL] Fatal error: %s", exc)
+    finally:
+        try:
+            render_detector_episode_async(episode_records, local_detector_config, episode_index)
+            logger.info("[DETECTOR-LOCAL] Submitted episode render job for episode %d", episode_index)
+        except Exception as exc:
+            logger.error("[DETECTOR-LOCAL] Failed to submit render job: %s", exc)
 
 
 def alarm_poller_worker(signal_queue, shared_danger, stop_event) -> None:
@@ -348,6 +375,7 @@ def record_loop_monitor(
     communication_retry_interval_s: float = 0.1,
     detector_mode: str = "remote",
     local_detector_config: LocalDetectorConfig | None = None,
+    local_detector_episode_index: int = 0,
 ):
     if acp_inference is None:
         acp_inference = ACPInferenceConfig()
@@ -449,6 +477,7 @@ def record_loop_monitor(
                 signal_queue,
                 stop_event,
                 max(observation_pool_size, 1),
+                local_detector_episode_index,
             ),
             daemon=True,
             name="detector-local-thread",

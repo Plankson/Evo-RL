@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import multiprocessing
 import os
 import time
 from collections import deque
@@ -36,6 +37,9 @@ class LocalDetectorConfig:
     state_joints_indices: list[int] = dataclasses.field(default_factory=list)
     state_gripper_indices: list[int] = dataclasses.field(default_factory=list)
     convert_images_to_uint8: bool = True
+    render_episode_video: bool = True
+    render_output_dir: str = "outputs/monitor_local_detector_videos"
+    render_fps: int = 12
 
 
 class _MonitorObservationAdapter:
@@ -260,3 +264,70 @@ def validate_local_detector_paths(cfg: LocalDetectorConfig) -> None:
 
     if cfg.detector_head_dir and not Path(cfg.detector_head_dir).exists():
         raise FileNotFoundError(f"detector_head_dir does not exist: {cfg.detector_head_dir}")
+
+
+def extract_episode_frame_for_visualization(raw_obs: dict[str, Any]) -> np.ndarray | None:
+    try:
+        from f_token.utils.episode_viz import extract_episode_frame
+
+        return extract_episode_frame(raw_obs)
+    except Exception:
+        images = raw_obs.get("images", {})
+        if not images:
+            return None
+        first_key = sorted(images.keys())[0]
+        frame = np.asarray(images[first_key])
+        if frame.ndim == 3 and frame.shape[0] in {1, 3}:
+            frame = np.transpose(frame, (1, 2, 0))
+        return frame
+
+
+def _render_detector_episode_worker(
+    records: list[dict[str, Any]],
+    output_dir: str,
+    fps: int,
+    episode_idx: int,
+) -> None:
+    from f_token.utils.episode_viz import EpisodeTrajectory, render_episode_video
+
+    episode_trace = EpisodeTrajectory()
+    for item in records:
+        frame = item.get("frame", None)
+        if frame is None:
+            continue
+        episode_trace.append(
+            frame=frame,
+            detector_score=float(item["score"]),
+            detector_band=float(item["threshold"]),
+            failure_flag=bool(item["is_dangerous"]),
+            title=str(item["title"]),
+        )
+
+    out_dir = Path(output_dir).expanduser().resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"episode_{episode_idx:06d}.mp4"
+    render_episode_video(
+        episode_trace,
+        out_path,
+        fps=max(1, int(fps)),
+        episode_title=f"Local Detector Episode {episode_idx}",
+    )
+
+
+def render_detector_episode_async(
+    records: list[dict[str, Any]],
+    cfg: LocalDetectorConfig,
+    episode_idx: int,
+) -> None:
+    if not cfg.render_episode_video or len(records) == 0:
+        return
+    if "spawn" in multiprocessing.get_all_start_methods():
+        ctx = multiprocessing.get_context("spawn")
+    else:
+        ctx = multiprocessing
+    proc = ctx.Process(
+        target=_render_detector_episode_worker,
+        args=(records, cfg.render_output_dir, cfg.render_fps, episode_idx),
+        daemon=False,
+    )
+    proc.start()
