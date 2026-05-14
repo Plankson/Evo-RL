@@ -314,13 +314,13 @@ def _render_detector_episode_worker(
     )
 
 
-def render_detector_episode_async(
+def render_detector_episode_in_process(
     records: list[dict[str, Any]],
     cfg: LocalDetectorConfig,
     episode_idx: int,
-) -> None:
+) -> multiprocessing.Process | None:
     if not cfg.render_episode_video or len(records) == 0:
-        return
+        return None
     if "spawn" in multiprocessing.get_all_start_methods():
         ctx = multiprocessing.get_context("spawn")
     else:
@@ -331,3 +331,4 @@ def render_detector_episode_async(
         daemon=False,
     )
     proc.start()
+    return proc

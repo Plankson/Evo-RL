@@ -48,6 +48,7 @@ class RecordMonitorLocalDetectorConfig(RecordConfig):
             detector_conformal_path="",
         )
     )
+    enable_episode_outcome_labeling: bool = True
 
     def __post_init__(self):
         super().__post_init__()

@@ -44,7 +44,7 @@ from lerobot.scripts.local_detector_runtime import (
     LocalDetectorConfig,
     LocalOpenPIDetectorRuntime,
     extract_episode_frame_for_visualization,
-    render_detector_episode_async,
+    render_detector_episode_in_process,
 )
 from lerobot.teleoperators import Teleoperator, koch_leader, omx_leader, so_leader
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
@@ -224,12 +224,15 @@ def detector_process_worker(
 
     try:
         while not stop_event.is_set():
+            wait_t0 = time.perf_counter()
             try:
                 item = observation_queue.get(timeout=0.1)
             except queue.Empty:
                 continue
+            frame_wait_ms = (time.perf_counter() - wait_t0) * 1e3
 
             try:
+                infer_t0 = time.perf_counter()
                 history.append(item)
                 latest = history[-1]
                 raw_obs = latest["raw_obs"]
@@ -244,6 +247,13 @@ def detector_process_worker(
                 )
                 detector_obs = batch_to_client_observation(batch, detector_endpoint_config)
                 result = detector_client.infer(detector_obs)
+                infer_ms = (time.perf_counter() - infer_t0) * 1e3
+                logger.info(
+                    "[DETECTOR] timing frame_wait=%.2fms infer=%.2fms total=%.2fms",
+                    frame_wait_ms,
+                    infer_ms,
+                    frame_wait_ms + infer_ms,
+                )
                 signal_queue.put(
                     {
                         "source": "detector",
@@ -289,12 +299,15 @@ def detector_local_worker(
 
     try:
         while not stop_event.is_set():
+            wait_t0 = time.perf_counter()
             try:
                 item = observation_queue.get(timeout=0.1)
             except queue.Empty:
                 continue
+            frame_wait_ms = (time.perf_counter() - wait_t0) * 1e3
 
             try:
+                infer_t0 = time.perf_counter()
                 history.append(item)
                 latest = history[-1]
                 raw_obs = latest["raw_obs"]
@@ -309,6 +322,13 @@ def detector_local_worker(
                 )
                 detector_obs = batch_to_client_observation(batch, local_detector_config)  # type: ignore[arg-type]
                 result = detector_runtime.infer(detector_obs)
+                infer_ms = (time.perf_counter() - infer_t0) * 1e3
+                logger.info(
+                    "[DETECTOR-LOCAL] timing frame_wait=%.2fms infer=%.2fms total=%.2fms",
+                    frame_wait_ms,
+                    infer_ms,
+                    frame_wait_ms + infer_ms,
+                )
                 frame = extract_episode_frame_for_visualization(detector_obs)
                 episode_records.append(
                     {
@@ -339,10 +359,13 @@ def detector_local_worker(
         logger.error("[DETECTOR-LOCAL] Fatal error: %s", exc)
     finally:
         try:
-            render_detector_episode_async(episode_records, local_detector_config, episode_index)
-            logger.info("[DETECTOR-LOCAL] Submitted episode render job for episode %d", episode_index)
+            render_proc = render_detector_episode_in_process(episode_records, local_detector_config, episode_index)
+            if render_proc is not None:
+                logger.info("[DETECTOR-LOCAL] Waiting for episode %d render to finish...", episode_index)
+                render_proc.join()
+                logger.info("[DETECTOR-LOCAL] Episode %d render completed.", episode_index)
         except Exception as exc:
-            logger.error("[DETECTOR-LOCAL] Failed to submit render job: %s", exc)
+            logger.error("[DETECTOR-LOCAL] Failed to render episode video: %s", exc)
 
 
 def alarm_poller_worker(signal_queue, shared_danger, stop_event) -> None:
@@ -777,7 +800,10 @@ def record_loop_monitor(
             timestamp = time.perf_counter() - start_episode_t
     finally:
         stop_event.set()
-        detector_proc.join(timeout=2.0)
+        if use_local_detector:
+            detector_proc.join()
+        else:
+            detector_proc.join(timeout=2.0)
         alarm_proc.join(timeout=2.0)
         if not use_local_detector and detector_proc.is_alive():
             detector_proc.terminate()
