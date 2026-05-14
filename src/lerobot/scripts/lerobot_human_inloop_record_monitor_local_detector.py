@@ -130,6 +130,12 @@ def human_inloop_record_monitor_local_detector(cfg: MonitorLocalDetectorRecordCo
     else:
         logging.info("Distributed robot IO disabled; using local hardware robot.")
         robot = make_robot_from_config(cfg.robot)
+    robot_connected_early = False
+    if cfg.distributed_robot_io:
+        # RobotIOClient gets action/observation feature schemas from server metadata on connect.
+        # We must connect before building dataset feature schemas.
+        robot.connect()
+        robot_connected_early = True
 
     teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
@@ -232,7 +238,8 @@ def human_inloop_record_monitor_local_detector(cfg: MonitorLocalDetectorRecordCo
         )
         collector_policy_id_human = cfg.collector_policy_id_human
 
-        robot.connect()
+        if not robot_connected_early:
+            robot.connect()
         if teleop is not None:
             teleop.connect()
         if callable(getattr(cfg, "_on_record_connected", None)):

@@ -91,6 +91,12 @@ def record_monitor_local_detector(cfg: RecordMonitorLocalDetectorConfig) -> LeRo
         )
     else:
         robot = make_robot_from_config(cfg.robot)
+    robot_connected_early = False
+    if cfg.distributed_robot_io:
+        # RobotIOClient gets action/observation feature schemas from server metadata on connect.
+        # We must connect before building dataset feature schemas.
+        robot.connect()
+        robot_connected_early = True
 
     teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
@@ -202,7 +208,8 @@ def record_monitor_local_detector(cfg: RecordMonitorLocalDetectorConfig) -> LeRo
         )
         collector_policy_id_human = cfg.collector_policy_id_human
 
-        robot.connect()
+        if not robot_connected_early:
+            robot.connect()
         if teleop is not None:
             teleop.connect()
 
