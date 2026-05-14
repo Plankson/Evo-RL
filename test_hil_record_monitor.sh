@@ -110,6 +110,10 @@ if [ "${TESTMODE}" = "true" ]; then
 fi
 
 args=(
+  --distributed_robot_io=true \
+  --robot_io_obs_address=tcp://127.0.0.1:5555 \
+  --robot_io_action_address=tcp://127.0.0.1:5556 \
+  --robot_io_meta_address=tcp://127.0.0.1:5557 \
   --robot.type=bi_piper_follower
   --robot.id=my_bi_piper_follower
   --robot.left_arm_config.port=can_left
