@@ -1,7 +1,5 @@
 #!/usr/bin/env python
 
-from __future__ import annotations
-
 import logging
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field
@@ -139,7 +137,7 @@ def record_monitor_local_detector(cfg: RecordMonitorLocalDetectorConfig) -> LeRo
     dataset = None
     listener = None
     policy_sync_executor = None
-    use_hdf5_episode_recorder = bool(getattr(cfg, "_save_hdf5_episodes", False))
+    use_hdf5_episode_recorder = bool(getattr(cfg, "_save_hdf5_episodes", True))
 
     try:
         if use_hdf5_episode_recorder:
