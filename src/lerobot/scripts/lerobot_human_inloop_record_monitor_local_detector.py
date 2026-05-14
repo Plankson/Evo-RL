@@ -262,6 +262,7 @@ def human_inloop_record_monitor_local_detector(cfg: MonitorLocalDetectorRecordCo
         dataset_context = nullcontext() if use_hdf5_episode_recorder else VideoEncodingManager(dataset)
         with dataset_context:
             recorded_episodes = 0
+            monitor_round_index = 0
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
                 events["episode_outcome"] = None
                 log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
@@ -296,8 +297,9 @@ def human_inloop_record_monitor_local_detector(cfg: MonitorLocalDetectorRecordCo
                     communication_retry_interval_s=cfg.communication_retry_interval_s,
                     detector_mode="local",
                     local_detector_config=cfg.local_detector,
-                    local_detector_episode_index=dataset.num_episodes,
+                    local_detector_episode_index=monitor_round_index,
                 )
+                monitor_round_index += 1
 
                 if events.get("stop_recording"):
                     break
