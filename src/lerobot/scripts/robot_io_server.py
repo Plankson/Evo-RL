@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
+from lerobot.cameras.reachy2_camera.configuration_reachy2_camera import Reachy2CameraConfig  # noqa: F401
+from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.configs import parser
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
