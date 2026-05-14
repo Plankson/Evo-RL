@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import time
 import logging
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field
@@ -16,6 +17,7 @@ from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import make_robot_from_config
 from lerobot.robots.robot_io import RobotIOClient
 from lerobot.scripts.hdf5_episode_recorder import HDF5EpisodeRecorder
+from lerobot.scripts.lerobot_human_inloop_record import _HumanInloopFailureResetController
 from lerobot.scripts.lerobot_record import RecordConfig
 from lerobot.scripts.local_detector_runtime import LocalDetectorConfig, validate_local_detector_paths
 from lerobot.scripts.recording_hil import PolicySyncDualArmExecutor
@@ -25,6 +27,7 @@ from lerobot.utils.constants import ACTION
 from lerobot.utils.control_utils import init_keyboard_listener, sanity_check_dataset_name, sanity_check_dataset_robot_compatibility
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.recording_annotations import infer_collector_policy_id, normalize_episode_success_label, resolve_episode_success_label
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging, log_say
 from lerobot.utils.visualization_utils import init_rerun
 
@@ -74,6 +77,12 @@ def record_monitor_local_detector(cfg: RecordMonitorLocalDetectorConfig) -> LeRo
 
     logging.info("Monitor recording with local detector enabled (teleop optional).")
     logging.info(pformat(asdict(cfg)))
+    if cfg.policy is not None:
+        failure_reset_controller = _HumanInloopFailureResetController(cfg)
+        cfg._on_record_connected = failure_reset_controller.on_record_connected
+        cfg._on_record_episode_outcome = failure_reset_controller.on_episode_outcome
+        cfg._before_record_episode = failure_reset_controller.before_record_episode
+        cfg._skip_reset_time_loop = True
 
     if cfg.display_data:
         init_rerun(session_name="recording_monitor_local_detector", ip=cfg.display_ip, port=cfg.display_port)
@@ -213,6 +222,9 @@ def record_monitor_local_detector(cfg: RecordMonitorLocalDetectorConfig) -> LeRo
             robot.connect()
         if teleop is not None:
             teleop.connect()
+        on_record_connected = getattr(cfg, "_on_record_connected", None)
+        if callable(on_record_connected):
+            on_record_connected(robot, teleop)
 
         if cfg.policy_sync_to_teleop:
             if cfg.policy is None:
@@ -239,6 +251,9 @@ def record_monitor_local_detector(cfg: RecordMonitorLocalDetectorConfig) -> LeRo
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
                 events["episode_outcome"] = None
                 log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
+                before_record_episode = getattr(cfg, "_before_record_episode", None)
+                if callable(before_record_episode):
+                    before_record_episode(robot, teleop, recorded_episodes)
 
                 record_loop_monitor(
                     robot=robot,
@@ -314,6 +329,9 @@ def record_monitor_local_detector(cfg: RecordMonitorLocalDetectorConfig) -> LeRo
                         {"episode_success": episode_success} if cfg.enable_episode_outcome_labeling else None
                     )
                     dataset.save_episode(extra_episode_metadata=extra_episode_metadata)
+                on_episode_outcome = getattr(cfg, "_on_record_episode_outcome", None)
+                if callable(on_episode_outcome):
+                    on_episode_outcome(robot, teleop, episode_success)
                 recorded_episodes += 1
 
     finally:

@@ -627,6 +627,7 @@ def record_loop_monitor(
 
     timestamp = 0.0
     sample_seq = 0
+    events["episode_initial_pose"] = None
     # Episode time starts when detector is ready and robot execution begins.
     start_episode_t = time.perf_counter()
 
@@ -660,6 +661,12 @@ def record_loop_monitor(
                     logger.info("Intervention toggle ignored because policy+teleop are not both active.")
 
             raw_obs = robot.get_observation()
+            if events.get("episode_initial_pose") is None:
+                initial_pose = {}
+                for action_key in robot.action_features:
+                    if action_key.endswith(".pos") and action_key in raw_obs:
+                        initial_pose[action_key] = float(raw_obs[action_key])
+                events["episode_initial_pose"] = initial_pose if initial_pose else None
             source_seq = sample_seq
             sample_seq += 1
             publish_observation_to_detector(
