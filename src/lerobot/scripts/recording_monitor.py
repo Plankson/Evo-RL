@@ -203,15 +203,24 @@ def detector_process_worker(
     signal_queue,
     stop_event,
     history_size: int,
+    ready_event,
+    failed_event,
+    error_queue,
 ) -> None:
     logger.info("[DETECTOR] Process started.")
-    detector_client = OpenPiWebsocketClient(
-        host=detector_endpoint_config.host,
-        port=detector_endpoint_config.port,
-        api_key=detector_endpoint_config.api_key,
-    )
-    history: deque[dict[str, Any]] = deque(maxlen=history_size)
-    device = get_safe_torch_device(policy_device)
+    try:
+        detector_client = OpenPiWebsocketClient(
+            host=detector_endpoint_config.host,
+            port=detector_endpoint_config.port,
+            api_key=detector_endpoint_config.api_key,
+        )
+        history: deque[dict[str, Any]] = deque(maxlen=history_size)
+        device = get_safe_torch_device(policy_device)
+        ready_event.set()
+    except Exception as exc:
+        error_queue.put(f"[DETECTOR] Initialization failed: {exc}")
+        failed_event.set()
+        return
 
     try:
         while not stop_event.is_set():
@@ -262,12 +271,21 @@ def detector_local_worker(
     stop_event,
     history_size: int,
     episode_index: int,
+    ready_event,
+    failed_event,
+    error_queue,
 ) -> None:
     logger.info("[DETECTOR-LOCAL] Worker started.")
-    detector_runtime = LocalOpenPIDetectorRuntime(local_detector_config)
-    history: deque[dict[str, Any]] = deque(maxlen=history_size)
-    device = get_safe_torch_device("cpu")
-    episode_records: list[dict[str, Any]] = []
+    try:
+        detector_runtime = LocalOpenPIDetectorRuntime(local_detector_config)
+        history: deque[dict[str, Any]] = deque(maxlen=history_size)
+        device = get_safe_torch_device("cpu")
+        episode_records: list[dict[str, Any]] = []
+        ready_event.set()
+    except Exception as exc:
+        error_queue.put(f"[DETECTOR-LOCAL] Initialization failed: {exc}")
+        failed_event.set()
+        return
 
     try:
         while not stop_event.is_set():
@@ -376,6 +394,7 @@ def record_loop_monitor(
     detector_mode: str = "remote",
     local_detector_config: LocalDetectorConfig | None = None,
     local_detector_episode_index: int = 0,
+    detector_ready_timeout_s: float = 120.0,
 ):
     if acp_inference is None:
         acp_inference = ACPInferenceConfig()
@@ -459,6 +478,9 @@ def record_loop_monitor(
         detector_source_queue = queue.Queue(maxsize=max(detector_queue_size, 1))
         signal_queue = queue.Queue()
         stop_event = threading.Event()
+        detector_ready_event = threading.Event()
+        detector_failed_event = threading.Event()
+        detector_error_queue = queue.Queue()
 
         @dataclass
         class _DangerState:
@@ -478,6 +500,9 @@ def record_loop_monitor(
                 stop_event,
                 max(observation_pool_size, 1),
                 local_detector_episode_index,
+                detector_ready_event,
+                detector_failed_event,
+                detector_error_queue,
             ),
             daemon=True,
             name="detector-local-thread",
@@ -499,6 +524,9 @@ def record_loop_monitor(
         detector_source_queue = ctx.Queue(maxsize=max(detector_queue_size, 1))
         signal_queue = ctx.Queue()
         stop_event = ctx.Event()
+        detector_ready_event = ctx.Event()
+        detector_failed_event = ctx.Event()
+        detector_error_queue = ctx.Queue()
         shared_danger = ctx.Value("i", 0)
         detector_proc = ctx.Process(
             target=detector_process_worker,
@@ -513,6 +541,9 @@ def record_loop_monitor(
                 signal_queue,
                 stop_event,
                 max(observation_pool_size, 1),
+                detector_ready_event,
+                detector_failed_event,
+                detector_error_queue,
             ),
             daemon=False,
         )
@@ -553,8 +584,27 @@ def record_loop_monitor(
     detector_proc.start()
     alarm_proc.start()
 
+    ready_deadline_t = time.perf_counter() + max(detector_ready_timeout_s, 0.0)
+    while not detector_ready_event.is_set():
+        if detector_failed_event.is_set():
+            try:
+                init_error = detector_error_queue.get_nowait()
+            except Exception:
+                init_error = "Detector initialization failed without detailed error."
+            raise RuntimeError(init_error)
+        if not use_local_detector and not detector_proc.is_alive():
+            raise RuntimeError("Detector process exited before becoming ready.")
+        if time.perf_counter() > ready_deadline_t:
+            raise TimeoutError(
+                f"Detector did not become ready within {detector_ready_timeout_s:.1f}s. "
+                "Robot execution is blocked until detector initializes."
+            )
+        time.sleep(0.05)
+    logger.info("Detector is ready. Starting robot execution loop.")
+
     timestamp = 0.0
     sample_seq = 0
+    # Episode time starts when detector is ready and robot execution begins.
     start_episode_t = time.perf_counter()
 
     try:
