@@ -7,13 +7,13 @@ lerobot-setup-can --mode=setup --interfaces=can_left,can_right
 
 # PROMPT="wipe the table with the towel"
 # PROMPT="fold clothes"
-# PROMPT="Zip up the zipper of the clothes"
+# PROMPT="Zip up the zippers of the clothes"
 # PROMPT="hang clothes on the hanger"
-PROMPT="PUT THE CUBES INTO BUCKET"
+# PROMPT="PUT THE CUBES INTO BUCKET"
 # PROMPT="PUSH OBJECTS WITH MARKER"
 # PROMPT="POUR WATER FROM ONE CUP INTO ANOTHER CUP"
 # PROMPT="WIPE THE TABLE WITH THE TOWEL"
-# PROMPT="BAG ITEMS INTO PAPER BAG"
+PROMPT="BAG ITEMS INTO PAPER BAG"
 # PROMPT="PUT THE PEN INTO THE PEN HOLDER"
 
 POLICY_NAME="pi0"
@@ -109,7 +109,7 @@ args=(
   --policy.host=103.237.28.254
   --policy.port="${PORT}"
   --policy.chunk_size=50
-  --policy.n_action_steps=24
+  --policy.n_action_steps=36
 )
 
 lerobot-record "${args[@]}"

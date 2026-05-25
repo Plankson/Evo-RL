@@ -161,10 +161,12 @@ class TTYKeyboardListener:
             self.events["toggle_intervention"] = True
         elif self.episode_success_key and normalized == self.episode_success_key:
             print(f"'{self.episode_success_key}' key pressed. Marking episode as success and exiting loop...")
+            print(f"Human marked success at rollout step {self.events.get('rollout_step_count', 0)}.")
             self.events["episode_outcome"] = EPISODE_SUCCESS
             self.events["exit_early"] = True
         elif self.episode_failure_key and normalized == self.episode_failure_key:
             print(f"'{self.episode_failure_key}' key pressed. Marking episode as failure and exiting loop...")
+            print(f"Human marked failure at rollout step {self.events.get('rollout_step_count', 0)}.")
             self.events["episode_outcome"] = EPISODE_FAILURE
             self.events["exit_early"] = True
 
@@ -247,6 +249,7 @@ def init_keyboard_listener(
     events["stop_recording"] = False
     events["toggle_intervention"] = False
     events["episode_outcome"] = None
+    events["rollout_step_count"] = 0
 
     listener = None
     if not is_headless():
@@ -276,6 +279,7 @@ def init_keyboard_listener(
                     and key.char.lower() == episode_success_key.lower()
                 ):
                     print(f"'{episode_success_key}' key pressed. Marking episode as success and exiting loop...")
+                    print(f"Human marked success at rollout step {events.get('rollout_step_count', 0)}.")
                     events["episode_outcome"] = EPISODE_SUCCESS
                     events["exit_early"] = True
                 elif (
@@ -285,6 +289,7 @@ def init_keyboard_listener(
                     and key.char.lower() == episode_failure_key.lower()
                 ):
                     print(f"'{episode_failure_key}' key pressed. Marking episode as failure and exiting loop...")
+                    print(f"Human marked failure at rollout step {events.get('rollout_step_count', 0)}.")
                     events["episode_outcome"] = EPISODE_FAILURE
                     events["exit_early"] = True
             except Exception as e:

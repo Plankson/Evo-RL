@@ -137,7 +137,7 @@ def batch_to_client_observation(batch: dict[str, Any], config: RemoteClientConfi
         padding = np.ones((1,6), dtype=np.float32)*-10000
         joints = joints[None, :]
         gripper = gripper[None, :]
-    return {
+    observation = {
         "images": images,
         "state.joints": joints,
         "state.gripper_w": gripper,
@@ -148,6 +148,10 @@ def batch_to_client_observation(batch: dict[str, Any], config: RemoteClientConfi
         "state.ee_rot_cam": padding,
         "prompt": task,
     }
+    new_episode_key = f"{OBS_PREFIX}new_episode"
+    if new_episode_key in batch:
+        observation["new_episode"] = _as_bool(batch[new_episode_key])
+    return observation
 
 
 def normalize_remote_action_chunk(result: dict[str, Any], expected_action_dim: int | None = None, policy_name: str = None) -> np.ndarray:
