@@ -9,16 +9,16 @@ lerobot-setup-can --mode=setup --interfaces=can_left,can_right
 # PROMPT="fold clothes"
 # PROMPT="Zip up the zipper of the clothes"
 # PROMPT="hang clothes on the hanger"
-PROMPT="PUT THE CUBES INTO BUCKET"
+# PROMPT="PUT THE CUBES INTO BUCKET"
 # PROMPT="PUSH OBJECTS WITH MARKER"
 # PROMPT="POUR WATER FROM ONE CUP INTO ANOTHER CUP"
-# PROMPT="WIPE THE TABLE WITH THE TOWEL"
+PROMPT="WIPE THE TABLE WITH THE TOWEL"
 # PROMPT="BAG ITEMS INTO PAPER BAG"
 # PROMPT="PUT THE PEN INTO THE PEN HOLDER"
 
 POLICY_NAME="pi0"
 # POLICY_NAME="ace_policy"
-PORT=9991
+PORT=3335
 # PORT=8080
 TAG="policy_only"
 TESTMODE="true"

@@ -1,26 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-lerobot-setup-can --mode=setup --interfaces=can_left,can_back_left,can_right,can_back_right
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# PROMPT="wipe the table with the towel Advantage: positive"
+lerobot-setup-can --mode=setup --interfaces=can_left,can_right
+
 # PROMPT="wipe the table with the towel"
 # PROMPT="fold clothes"
-PROMPT="fold clothes Advantage: positive"
 # PROMPT="Zip up the zipper of the clothes"
 # PROMPT="hang clothes on the hanger"
-# PROMPT="PUT THE CUBES INTO BUCKET"
+#PROMPT="PUT THE CUBES INTO BUCKET"
 # PROMPT="PUSH OBJECTS WITH MARKER"
 # PROMPT="POUR WATER FROM ONE CUP INTO ANOTHER CUP"
-# PROMPT="WIPE THE TABLE WITH THE TOWEL"s
+# PROMPT="WIPE THE TABLE WITH THE TOWEL"
 # PROMPT="BAG ITEMS INTO PAPER BAG"
-# PROMPT="PUT THE PEN INTO THE PEN HOLDER"
+PROMPT="PUT THE PEN INTO THE PEN HOLDER"
+PROMPT="put the pen into the pen holder"
 
 POLICY_NAME="pi0"
 # POLICY_NAME="ace_policy"
-
-TAG="fold_cloth_condition_round1_lerobot"
-TESTMODE="false"
+POLICY_NAME="ace_policy"
+PORT=3336
+# PORT=8080
+TAG="policy_only"
+TESTMODE="true"
+RESET_POSE_PATH="${SCRIPT_DIR}/reset_state/reset.json"
 
 for arg in "$@"; do
   case "$arg" in
@@ -62,6 +66,7 @@ fi
 if [ "${TESTMODE}" = "true" ]; then
   DATASET_BASE_DIR="${TMPDIR:-/tmp}/evorl_dataset_testmode/${POLICY_NAME}/${DAY_FOLDER}"
   DATASET_ROOT="${DATASET_BASE_DIR}/${DATASET_NAME}"
+  rm -rf "${DATASET_ROOT}"
   trap 'rm -rf "${DATASET_ROOT}"' EXIT
 else
   DATASET_BASE_DIR="${HOME}/evorl_dataset/${POLICY_NAME}/${DAY_FOLDER}"
@@ -69,9 +74,10 @@ else
 fi
 
 DATASET_REPO_ID="ACE_ROBOTICS/${POLICY_NAME}_${DAY_FOLDER}_${DATASET_NAME}"
-mkdir -p "${DATASET_ROOT}"
+mkdir -p "${DATASET_BASE_DIR}"
 
 echo "Saving dataset to: ${DATASET_ROOT}"
+echo "Policy-only record: follower arms + remote policy, no leader/master arms."
 if [ -n "${TAG}" ]; then
   echo "Recording tag: ${TAG}"
 fi
@@ -88,29 +94,24 @@ args=(
   --robot.right_arm_config.require_calibration=false
   --robot.left_arm_config.cameras='{ wrist: {type: intelrealsense, serial_number_or_name: "243322070942", width: 640, height: 480, fps: 30, warmup_s: 2}}'
   --robot.right_arm_config.cameras='{ wrist: {type: intelrealsense, serial_number_or_name: "243722071316", width: 640, height: 480, fps: 30, warmup_s: 2}, front: {type: intelrealsense, serial_number_or_name: "239622301704", width: 640, height: 480, fps: 30, warmup_s: 2}}'
-  --teleop.type=bi_piper_leader
-  --teleop.id=my_bi_piper_leader
-  --teleop.left_arm_config.port=can_back_left
-  --teleop.right_arm_config.port=can_back_right
-  --teleop.left_arm_config.require_calibration=false
-  --teleop.right_arm_config.require_calibration=false
   --policy.type=remote_client
   --dataset.repo_id="${DATASET_REPO_ID}"
   --dataset.root="${DATASET_ROOT}"
   --dataset.single_task="${PROMPT}"
   --dataset.num_episodes=20
-  --dataset.episode_time_s=500
+  --dataset.episode_time_s=200
+  --dataset.reset_time_s=0
   --dataset.push_to_hub=false
+  --policy_only_reset_pose_path="${RESET_POSE_PATH}"
+  --policy_only_reset_duration_s=5
   --display_data=true
   --play_sounds=false
   --test_mode="${TESTMODE}"
   --policy.policy_name="${POLICY_NAME}"
   --policy.host=103.237.28.254
-  --policy.port=1999
+  --policy.port="${PORT}"
   --policy.chunk_size=50
-  --policy.n_action_steps=36
+  --policy.n_action_steps=24
 )
 
-lerobot-human-inloop-record "${args[@]}"
-
-
+lerobot-record "${args[@]}"

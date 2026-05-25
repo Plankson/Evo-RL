@@ -55,9 +55,9 @@ from lerobot.utils.visualization_utils import log_rerun_data
 T = TypeVar("T")
 
 INFER_PI0_GRIPPER_CLOSE_THRESHOLD = 0.02
-#INFER_PI0_GRIPPER_CLOSE_THRESHOLD = -10000
+# INFER_PI0_GRIPPER_CLOSE_THRESHOLD = -10000
 INFER_PI0_GRIPPER_OPEN_THRESHOLD = 0.03
-#INFER_PI0_GRIPPER_OPEN_THRESHOLD = 10000
+# INFER_PI0_GRIPPER_OPEN_THRESHOLD = 10000
 INFER_PI0_GRIPPER_CLOSE_COMMAND = -1
 INFER_PI0_GRIPPER_OPEN_COMMAND = 100
 
@@ -341,6 +341,8 @@ def record_loop(
 
         if dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
+            if policy is not None and rollout_step_count == 0:
+                observation_frame[f"{OBS_STR}.new_episode"] = np.array(True)
 
         # Get action from policy and/or teleop
         act_processed_policy: RobotAction | None = None
