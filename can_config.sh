@@ -109,10 +109,15 @@ fi
 # 预定义的 USB 端口、目标接口名称及其比特率（在多个 CAN 模块时使用）
 if [ "$EXPECTED_CAN_COUNT" -ne 1 ]; then
     declare -A USB_PORTS 
+#    USB_PORTS["1-13:1.0"]="can_left:1000000"
+#    USB_PORTS["1-12:1.0"]="can_right:1000000"
+#    USB_PORTS["1-4:1.0"]="can0:500000"
+#    USB_PORTS["1-2.3:1.0"]="can_back_left:1000000"
+#    USB_PORTS["1-1:1.0"]="can_back_right:1000000" # right back
     USB_PORTS["1-13:1.0"]="can_left:1000000"
     USB_PORTS["1-12:1.0"]="can_right:1000000"
     USB_PORTS["1-4:1.0"]="can0:500000"
-    USB_PORTS["1-2.3:1.0"]="can_back_left:1000000"
+    USB_PORTS["1-2:1.0"]="can_back_left:1000000"
     USB_PORTS["1-1:1.0"]="can_back_right:1000000" # right back
 fi
 

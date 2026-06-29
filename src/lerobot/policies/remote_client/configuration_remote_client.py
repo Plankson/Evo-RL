@@ -23,6 +23,8 @@ class RemoteClientConfig(PreTrainedConfig):
 
     chunk_size: int = 50
     n_action_steps: int = 50
+    # Number of historical image frames to send for policies that require temporal context (e.g. da3).
+    n_image_history_steps: int = 1
 
     # Maps local LeRobot image keys to remote keys.
     # Both full keys (`observation.images.*`) and short keys are accepted.

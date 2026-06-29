@@ -55,9 +55,9 @@ from lerobot.utils.visualization_utils import log_rerun_data
 T = TypeVar("T")
 
 INFER_PI0_GRIPPER_CLOSE_THRESHOLD = 0.02
-#INFER_PI0_GRIPPER_CLOSE_THRESHOLD = -10000
+# INFER_PI0_GRIPPER_CLOSE_THRESHOLD = -10000
 INFER_PI0_GRIPPER_OPEN_THRESHOLD = 0.03
-#INFER_PI0_GRIPPER_OPEN_THRESHOLD = 10000
+# INFER_PI0_GRIPPER_OPEN_THRESHOLD = 10000
 INFER_PI0_GRIPPER_CLOSE_COMMAND = -1
 INFER_PI0_GRIPPER_OPEN_COMMAND = 100
 
@@ -452,6 +452,65 @@ def record_loop(
         robot_action_to_send = robot_action_processor((action_values_for_robot, obs))
         logging.info("Robot action debug | robot_action_to_send=%s", robot_action_to_send)
 
+        # if rollout_step_count < 24:
+        #     joint_deltas = {}
+        #     gripper_deltas = {}
+        #     missing_obs_keys = []
+
+        #     for key, target in robot_action_to_send.items():
+        #         if not key.endswith(".pos"):
+        #             continue
+
+        #         current = obs.get(key)
+        #         if current is None:
+        #             missing_obs_keys.append(key)
+        #             continue
+
+        #         delta = float(target) - float(current)
+
+        #         if "joint_" in key:
+        #             joint_deltas[key] = delta
+        #         elif "gripper" in key:
+        #             gripper_deltas[key] = delta
+
+        #     logging.warning(
+        #         "[FIRST_ACTION_DEBUG step=%d] selected_from_policy=%s",
+        #         rollout_step_count,
+        #         selected_from_policy,
+        #     )
+        #     logging.warning(
+        #         "[FIRST_ACTION_DEBUG step=%d] raw_obs_pos=%s",
+        #         rollout_step_count,
+        #         {k: v for k, v in obs.items() if k.endswith(".pos")},
+        #     )
+        #     logging.warning(
+        #         "[FIRST_ACTION_DEBUG step=%d] policy_action_rad=%s",
+        #         rollout_step_count,
+        #         act_processed_policy,
+        #     )
+        #     logging.warning(
+        #         "[FIRST_ACTION_DEBUG step=%d] action_for_robot_units=%s",
+        #         rollout_step_count,
+        #         action_values_for_robot,
+        #     )
+        #     logging.warning(
+        #         "[FIRST_ACTION_DEBUG step=%d] robot_action_to_send=%s",
+        #         rollout_step_count,
+        #         robot_action_to_send,
+        #     )
+        #     logging.warning(
+        #         "[FIRST_ACTION_DEBUG step=%d] joint_delta_send_minus_obs=%s",
+        #         rollout_step_count,
+        #         joint_deltas,
+        #     )
+        #     logging.warning(
+        #         "[FIRST_ACTION_DEBUG step=%d] gripper_delta_send_minus_obs=%s missing_obs_keys=%s",
+        #         rollout_step_count,
+        #         gripper_deltas,
+        #         missing_obs_keys,
+        #     )
+        # import sys;sys.exit(0)
+        # import ipdb; ipdb.set_trace()
         # Send action to robot
         # Action can eventually be clipped using `max_relative_target`,
         # so action actually sent is saved in the dataset. action = postprocessor.process(action)
@@ -468,6 +527,11 @@ def record_loop(
                 "robot.send_action",
                 lambda robot_action_to_send=robot_action_to_send: robot.send_action(robot_action_to_send),
             )
+        
+        # if selected_from_policy and policy is not None:
+        #     n_action_steps = int(getattr(policy.config, "n_action_steps", 24))
+        #     if (rollout_step_count + 1) % n_action_steps == 0:
+        #         import ipdb; ipdb.set_trace()
 
         # Write to dataset
         if dataset is not None:

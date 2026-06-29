@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+!/usr/bin/env bash
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -6,21 +6,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 lerobot-setup-can --mode=setup --interfaces=can_left,can_right
 
 # PROMPT="wipe the table with the towel"
-PROMPT="put the cubes into bucket"
-PROMPT="stack clothes"
 # PROMPT="fold clothes"
-# PROMPT="Zip up the zipper of the clothes"
+# PROMPT="Zip up the zippers of the clothes"
 # PROMPT="hang clothes on the hanger"
 # PROMPT="PUT THE CUBES INTO BUCKET"
 # PROMPT="PUSH OBJECTS WITH MARKER"
 # PROMPT="POUR WATER FROM ONE CUP INTO ANOTHER CUP"
 # PROMPT="WIPE THE TABLE WITH THE TOWEL"
-# PROMPT="BAG ITEMS INTO PAPER BAG"
+PROMPT="BAG ITEMS INTO PAPER BAG"
 # PROMPT="PUT THE PEN INTO THE PEN HOLDER"
 
 POLICY_NAME="pi0"
 # POLICY_NAME="ace_policy"
-PORT=3335
+PORT=1112
 # PORT=8080
 TAG="policy_only"
 TESTMODE="true"
@@ -110,8 +108,8 @@ args=(
   --policy.policy_name="${POLICY_NAME}"
   --policy.host=103.237.28.254
   --policy.port="${PORT}"
-  --policy.chunk_size=50
-  --policy.n_action_steps=24
+  --policy.chunk_size=25
+  --policy.n_action_steps=25
 )
 
 lerobot-record "${args[@]}"

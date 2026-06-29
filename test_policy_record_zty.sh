@@ -6,8 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 lerobot-setup-can --mode=setup --interfaces=can_left,can_right
 
 # PROMPT="wipe the table with the towel"
-PROMPT="put the cubes into bucket"
-PROMPT="stack clothes"
+PROMPT="fold clothes"
 # PROMPT="fold clothes"
 # PROMPT="Zip up the zipper of the clothes"
 # PROMPT="hang clothes on the hanger"
@@ -20,7 +19,7 @@ PROMPT="stack clothes"
 
 POLICY_NAME="pi0"
 # POLICY_NAME="ace_policy"
-PORT=3335
+PORT=8088
 # PORT=8080
 TAG="policy_only"
 TESTMODE="true"
@@ -99,7 +98,7 @@ args=(
   --dataset.root="${DATASET_ROOT}"
   --dataset.single_task="${PROMPT}"
   --dataset.num_episodes=20
-  --dataset.episode_time_s=200
+  --dataset.episode_time_s=50000
   --dataset.reset_time_s=0
   --dataset.push_to_hub=false
   --policy_only_reset_pose_path="${RESET_POSE_PATH}"
@@ -108,10 +107,10 @@ args=(
   --play_sounds=false
   --test_mode="${TESTMODE}"
   --policy.policy_name="${POLICY_NAME}"
-  --policy.host=103.237.28.254
+  --policy.host=169.254.118.66
   --policy.port="${PORT}"
   --policy.chunk_size=50
-  --policy.n_action_steps=24
+  --policy.n_action_steps=48
 )
 
 lerobot-record "${args[@]}"

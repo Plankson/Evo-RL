@@ -1,0 +1,20 @@
+{
+  "joint_pos": 
+  {
+    "left_gripper.pos": 0.063100003,
+    "left_joint_1.pos": 0.19589,
+    "left_joint_2.pos": 80.52189,
+    "left_joint_3.pos": -71.30993,
+    "left_joint_4.pos": 10.17360,
+    "left_joint_5.pos": 2.60461,
+    "left_joint_6.pos": -6.87434,
+    "right_gripper.pos": 0.00028,
+    "right_joint_1.pos": -1.20336,
+    "right_joint_2.pos": 53.97505,
+    "right_joint_3.pos": -69.34598,
+    "right_joint_4.pos": -6.42463,
+    "right_joint_5.pos": 24.48613,
+    "right_joint_6.pos": 4.52345
+},
+  "robot_type": "bi_piper_follower"
+}

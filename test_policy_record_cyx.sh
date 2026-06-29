@@ -6,8 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 lerobot-setup-can --mode=setup --interfaces=can_left,can_right
 
 # PROMPT="wipe the table with the towel"
-PROMPT="put the cubes into bucket"
-PROMPT="stack clothes"
+# PROMPT="put the cubes into bucket"
+PROMPT="put the pen into the pen holder"
 # PROMPT="fold clothes"
 # PROMPT="Zip up the zipper of the clothes"
 # PROMPT="hang clothes on the hanger"
@@ -20,7 +20,7 @@ PROMPT="stack clothes"
 
 POLICY_NAME="pi0"
 # POLICY_NAME="ace_policy"
-PORT=3335
+PORT=3336
 # PORT=8080
 TAG="policy_only"
 TESTMODE="true"

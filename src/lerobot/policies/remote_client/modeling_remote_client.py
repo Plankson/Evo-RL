@@ -22,6 +22,17 @@ def client_image_key(local_key: str, image_key_map: dict[str, str]) -> str:
     return short_key
 
 
+def _uses_da3_image_list(policy_name: str) -> bool:
+    return policy_name.lower() == "da3"
+
+
+def duplicate_current_frame_and_stack(frame: np.ndarray, count: int) -> np.ndarray:
+    if count < 1:
+        raise ValueError(f"Expected count >= 1, got {count}.")
+    frames = [frame.copy() for _ in range(count)]
+    return np.stack(frames, axis=0)
+
+
 def image_tensor_to_uint8_chw(image: Tensor, convert_images_to_uint8: bool = True) -> np.ndarray:
     if image.ndim == 4:
         if image.shape[0] != 1:
@@ -48,6 +59,8 @@ def _default_state_layout_for_policy_name(policy_name: str) -> str:
         return "pi0"
     if policy_name in {"ace_policy", "qwenvla", "zero_pad"}:
         return "ace_policy"
+    if policy_name in {"da3"}:
+        return "da3"
     raise ValueError(
         f"Unsupported policy_name '{policy_name}' for automatic state layout selection."
     )
@@ -93,6 +106,8 @@ def split_state_vector(
                 torch.ones(1, dtype=state.dtype) * -10000,
             )
         ).numpy()
+    elif state_layout == "da3":
+        joints = state[[0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12]].numpy()
     else:
         raise AssertionError(f"Unexpected state layout '{state_layout}'")
     return joints, gripper
@@ -106,18 +121,33 @@ def _as_bool(value: Any) -> bool:
     return bool(value)
 
 
-def batch_to_client_observation(batch: dict[str, Any], config: RemoteClientConfig) -> dict[str, Any]:
+def batch_to_client_observation(
+    batch: dict[str, Any],
+    config: RemoteClientConfig,
+) -> dict[str, Any]:
     if OBS_STATE not in batch:
         raise KeyError(f"Missing required state key '{OBS_STATE}' for remote infer_pi0 payload.")
 
+    use_da3_image_list = _uses_da3_image_list(config.policy_name)
     images = {}
     for key, value in batch.items():
         if not key.startswith(f"{OBS_IMAGES}."):
             continue
-        images[client_image_key(key, config.image_key_map)] = image_tensor_to_uint8_chw(
+        remote_key = client_image_key(key, config.image_key_map)
+        frame = image_tensor_to_uint8_chw(
             value,
             convert_images_to_uint8=config.convert_images_to_uint8,
         )
+        if use_da3_image_list:
+            images[remote_key] = duplicate_current_frame_and_stack(frame, config.n_image_history_steps)
+        else:
+            images[remote_key] = frame
+
+    print(
+        "remote_client images:",
+        f"n_image_history_steps={config.n_image_history_steps}",
+        {key: value.shape for key, value in images.items()},
+    )
 
     joints, gripper = split_state_vector(
         batch[OBS_STATE],
@@ -161,6 +191,10 @@ def normalize_remote_action_chunk(result: dict[str, Any], expected_action_dim: i
     if action_chunk.ndim != 2:
         raise ValueError(f"Expected action chunk with shape (T, D), got {action_chunk.shape}")
 
+    if policy_name == 'da3':
+        action_chunk = np.concatenate(
+            [action_chunk[..., :6], action_chunk[..., 7:8], action_chunk[..., 8:8+6], action_chunk[..., 15:16]], axis=-1
+        )
     if policy_name=='ace_policy':
         action_chunk = np.concatenate(
             [action_chunk[..., :6], action_chunk[..., 7:8], action_chunk[..., 8:8+6], action_chunk[..., 15:16]], axis=-1
@@ -210,6 +244,7 @@ class RemoteClientPolicy(PreTrainedPolicy):
 
         observation = batch_to_client_observation(batch, self.config)
         result = self._get_client().infer(observation)
+        # print('result:',result.keys(), result, batch['observation.state'])
         # import pdb;pdb.set_trace()
 
         expected_action_dim = None
