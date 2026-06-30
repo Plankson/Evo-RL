@@ -1,4 +1,4 @@
-!/usr/bin/env bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,7 +22,8 @@ PORT=1112
 # PORT=8080
 TAG="policy_only"
 TESTMODE="true"
-RESET_POSE_PATH="${SCRIPT_DIR}/reset_state/reset.json"
+START_STATE="${START_STATE:-flat}"
+RESET_POSE_PATH=""
 
 for arg in "$@"; do
   case "$arg" in
@@ -38,9 +39,21 @@ for arg in "$@"; do
     --testmode=*)
       TESTMODE="${arg#--testmode=}"
       ;;
+    start_state=*)
+      START_STATE="${arg#start_state=}"
+      ;;
+    --start_state=*)
+      START_STATE="${arg#--start_state=}"
+      ;;
+    reset_pose_path=*)
+      RESET_POSE_PATH="${arg#reset_pose_path=}"
+      ;;
+    --reset_pose_path=*)
+      RESET_POSE_PATH="${arg#--reset_pose_path=}"
+      ;;
     *)
       echo "Unknown argument: ${arg}" >&2
-      echo "Usage: $0 [tag=<value>] [testmode=true|false]" >&2
+      echo "Usage: $0 [tag=<value>] [testmode=true|false] [start_state=reset|flat] [reset_pose_path=<path>]" >&2
       exit 1
       ;;
   esac
@@ -49,6 +62,27 @@ done
 TESTMODE="$(printf '%s' "${TESTMODE}" | tr '[:upper:]' '[:lower:]')"
 if [ "${TESTMODE}" != "true" ] && [ "${TESTMODE}" != "false" ]; then
   echo "Invalid testmode: ${TESTMODE}. Use true or false." >&2
+  exit 1
+fi
+
+START_STATE="$(printf '%s' "${START_STATE}" | tr '[:upper:]' '[:lower:]' | tr '_' '-')"
+if [ -z "${RESET_POSE_PATH}" ]; then
+  case "${START_STATE}" in
+    reset)
+      RESET_POSE_PATH="${SCRIPT_DIR}/reset_state/reset.json"
+      ;;
+    flat|default)
+      RESET_POSE_PATH="${SCRIPT_DIR}/reset_state/default.json"
+      ;;
+    *)
+      echo "Invalid start_state: ${START_STATE}. Use reset or flat, or pass reset_pose_path=<path>." >&2
+      exit 1
+      ;;
+  esac
+fi
+
+if [ ! -f "${RESET_POSE_PATH}" ]; then
+  echo "Reset pose file not found: ${RESET_POSE_PATH}" >&2
   exit 1
 fi
 
@@ -79,6 +113,8 @@ echo "Policy-only record: follower arms + remote policy, no leader/master arms."
 if [ -n "${TAG}" ]; then
   echo "Recording tag: ${TAG}"
 fi
+echo "Start state: ${START_STATE}"
+echo "Reset pose path: ${RESET_POSE_PATH}"
 if [ "${TESTMODE}" = "true" ]; then
   echo "Test mode enabled: this run will not persist any saved data."
 fi
