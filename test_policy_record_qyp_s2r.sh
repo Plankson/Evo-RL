@@ -24,6 +24,11 @@ TAG="policy_only"
 TESTMODE="true"
 START_STATE="${START_STATE:-flat}"
 RESET_POSE_PATH=""
+CALIBRATION_DIR="${CALIBRATION_DIR:-${TMPDIR:-/tmp}/evorl_openvla_no_calib}"
+OPENVLA_OFT_SMOOTH_ACTIONS="${OPENVLA_OFT_SMOOTH_ACTIONS:-true}"
+OPENVLA_OFT_INTERPOLATE_START_STEPS="${OPENVLA_OFT_INTERPOLATE_START_STEPS:-5}"
+OPENVLA_OFT_MAX_JOINT_DELTA_RAD="${OPENVLA_OFT_MAX_JOINT_DELTA_RAD:-0.05}"
+OPENVLA_OFT_MAX_GRIPPER_DELTA="${OPENVLA_OFT_MAX_GRIPPER_DELTA:-0.01}"
 
 for arg in "$@"; do
   case "$arg" in
@@ -115,6 +120,8 @@ if [ -n "${TAG}" ]; then
 fi
 echo "Start state: ${START_STATE}"
 echo "Reset pose path: ${RESET_POSE_PATH}"
+echo "Calibration dir: ${CALIBRATION_DIR}"
+echo "OpenVLA-OFT smoothing: ${OPENVLA_OFT_SMOOTH_ACTIONS}"
 if [ "${TESTMODE}" = "true" ]; then
   echo "Test mode enabled: this run will not persist any saved data."
 fi
@@ -124,6 +131,7 @@ args=(
   --robot.id=my_bi_piper_follower
   --robot.left_arm_config.port=can_left
   --robot.right_arm_config.port=can_right
+  --robot.calibration_dir="${CALIBRATION_DIR}"
   --robot.left_arm_config.require_calibration=false
   --robot.right_arm_config.require_calibration=false
   --robot.left_arm_config.cameras='{ wrist: {type: intelrealsense, serial_number_or_name: "243322070942", width: 640, height: 480, fps: 30, warmup_s: 2}}'
@@ -146,6 +154,10 @@ args=(
   --policy.port="${PORT}"
   --policy.chunk_size=25
   --policy.n_action_steps=25
+  --policy.openvla_oft_smooth_actions="${OPENVLA_OFT_SMOOTH_ACTIONS}"
+  --policy.openvla_oft_interpolate_start_steps="${OPENVLA_OFT_INTERPOLATE_START_STEPS}"
+  --policy.openvla_oft_max_joint_delta_rad="${OPENVLA_OFT_MAX_JOINT_DELTA_RAD}"
+  --policy.openvla_oft_max_gripper_delta="${OPENVLA_OFT_MAX_GRIPPER_DELTA}"
 )
 
 lerobot-record "${args[@]}"

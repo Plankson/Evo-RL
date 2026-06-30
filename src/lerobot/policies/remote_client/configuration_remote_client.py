@@ -43,6 +43,12 @@ class RemoteClientConfig(PreTrainedConfig):
 
     convert_images_to_uint8: bool = True
 
+    # SimpleVLA-style protection for OpenVLA-OFT real-robot execution.
+    openvla_oft_smooth_actions: bool = False
+    openvla_oft_interpolate_start_steps: int = 5
+    openvla_oft_max_joint_delta_rad: float = 0.05
+    openvla_oft_max_gripper_delta: float = 0.01
+
     def __post_init__(self) -> None:
         super().__post_init__()
 
@@ -59,6 +65,13 @@ class RemoteClientConfig(PreTrainedConfig):
             raise ValueError(
                 f"n_action_steps ({self.n_action_steps}) cannot be greater than chunk_size ({self.chunk_size})"
             )
+
+        if self.openvla_oft_interpolate_start_steps < 0:
+            raise ValueError("openvla_oft_interpolate_start_steps must be >= 0")
+        if self.openvla_oft_max_joint_delta_rad <= 0:
+            raise ValueError("openvla_oft_max_joint_delta_rad must be > 0")
+        if self.openvla_oft_max_gripper_delta <= 0:
+            raise ValueError("openvla_oft_max_gripper_delta must be > 0")
 
     def validate_features(self) -> None:
         return

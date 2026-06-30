@@ -188,6 +188,65 @@ def batch_to_client_observation(
     }
 
 
+def current_state_vector(state: Tensor) -> np.ndarray:
+    if state.ndim == 2:
+        if state.shape[0] != 1:
+            raise ValueError(f"Expected batch size 1 for state tensor, got shape={tuple(state.shape)}")
+        state = state.squeeze(0)
+    if state.ndim != 1:
+        raise ValueError(f"Expected 1D state tensor after squeeze, got shape={tuple(state.shape)}")
+    return state.detach().cpu().numpy().astype(np.float32, copy=True)
+
+
+def smooth_openvla_oft_action_chunk(
+    action_chunk: np.ndarray,
+    current_state: Tensor,
+    config: RemoteClientConfig,
+) -> np.ndarray:
+    if not _is_openvla_oft_policy(config.policy_name) or not config.openvla_oft_smooth_actions:
+        return action_chunk
+
+    current = current_state_vector(current_state)
+    if current.shape[-1] != action_chunk.shape[-1]:
+        raise ValueError(
+            f"Cannot smooth OpenVLA-OFT actions: current state dim {current.shape[-1]} "
+            f"!= action dim {action_chunk.shape[-1]}"
+        )
+
+    smoothed = action_chunk.astype(np.float32, copy=True)
+    n_steps = smoothed.shape[0]
+    interpolate_steps = min(int(config.openvla_oft_interpolate_start_steps), n_steps)
+    if interpolate_steps > 0:
+        denom = max(1, interpolate_steps)
+        for i in range(interpolate_steps):
+            alpha = i / float(denom)
+            smoothed[i] = current * (1.0 - alpha) + smoothed[i] * alpha
+
+    gripper_idx = np.array([6, 13], dtype=np.int64)
+    joint_idx = np.array([i for i in range(smoothed.shape[-1]) if i not in {6, 13}], dtype=np.int64)
+    max_joint_delta = float(config.openvla_oft_max_joint_delta_rad)
+    max_gripper_delta = float(config.openvla_oft_max_gripper_delta)
+
+    prev = current.copy()
+    for i in range(n_steps):
+        target = smoothed[i]
+        limited = target.copy()
+        limited[joint_idx] = prev[joint_idx] + np.clip(
+            target[joint_idx] - prev[joint_idx],
+            -max_joint_delta,
+            max_joint_delta,
+        )
+        limited[gripper_idx] = prev[gripper_idx] + np.clip(
+            target[gripper_idx] - prev[gripper_idx],
+            -max_gripper_delta,
+            max_gripper_delta,
+        )
+        smoothed[i] = limited
+        prev = limited
+
+    return smoothed
+
+
 def normalize_remote_action_chunk(result: dict[str, Any], expected_action_dim: int | None = None, policy_name: str = None) -> np.ndarray:
     if "actions" not in result:
         raise KeyError("Remote server response is missing required 'actions' field.")
@@ -263,6 +322,7 @@ class RemoteClientPolicy(PreTrainedPolicy):
             expected_action_dim = self.config.output_features[ACTION].shape[0]
 
         action_chunk = normalize_remote_action_chunk(result, expected_action_dim=expected_action_dim, policy_name=self.config.policy_name)
+        action_chunk = smooth_openvla_oft_action_chunk(action_chunk, batch[OBS_STATE], self.config)
         return torch.from_numpy(action_chunk).unsqueeze(0)
 
     @torch.no_grad()
