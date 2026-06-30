@@ -18,17 +18,21 @@ PROMPT="BAG ITEMS INTO PAPER BAG"
 
 POLICY_NAME="openvla-oft"
 # POLICY_NAME="ace_policy"
-PORT=1112
+PORT=8886
 # PORT=8080
 TAG="policy_only"
 TESTMODE="true"
 START_STATE="${START_STATE:-flat}"
 RESET_POSE_PATH=""
 CALIBRATION_DIR="${CALIBRATION_DIR:-${TMPDIR:-/tmp}/evorl_openvla_no_calib}"
+CONTROL_FPS="${CONTROL_FPS:-10}"
+N_ACTION_STEPS="${N_ACTION_STEPS:-5}"
+PIPER_SPEED_RATIO="${PIPER_SPEED_RATIO:-20}"
+PIPER_HIGH_FOLLOW="${PIPER_HIGH_FOLLOW:-false}"
 OPENVLA_OFT_SMOOTH_ACTIONS="${OPENVLA_OFT_SMOOTH_ACTIONS:-true}"
-OPENVLA_OFT_INTERPOLATE_START_STEPS="${OPENVLA_OFT_INTERPOLATE_START_STEPS:-5}"
-OPENVLA_OFT_MAX_JOINT_DELTA_RAD="${OPENVLA_OFT_MAX_JOINT_DELTA_RAD:-0.05}"
-OPENVLA_OFT_MAX_GRIPPER_DELTA="${OPENVLA_OFT_MAX_GRIPPER_DELTA:-0.01}"
+OPENVLA_OFT_INTERPOLATE_START_STEPS="${OPENVLA_OFT_INTERPOLATE_START_STEPS:-10}"
+OPENVLA_OFT_MAX_JOINT_DELTA_RAD="${OPENVLA_OFT_MAX_JOINT_DELTA_RAD:-0.01}"
+OPENVLA_OFT_MAX_GRIPPER_DELTA="${OPENVLA_OFT_MAX_GRIPPER_DELTA:-0.002}"
 
 for arg in "$@"; do
   case "$arg" in
@@ -121,7 +125,12 @@ fi
 echo "Start state: ${START_STATE}"
 echo "Reset pose path: ${RESET_POSE_PATH}"
 echo "Calibration dir: ${CALIBRATION_DIR}"
+echo "Control fps: ${CONTROL_FPS}"
+echo "Policy action steps: ${N_ACTION_STEPS}"
+echo "Piper speed ratio: ${PIPER_SPEED_RATIO}"
+echo "Piper high follow: ${PIPER_HIGH_FOLLOW}"
 echo "OpenVLA-OFT smoothing: ${OPENVLA_OFT_SMOOTH_ACTIONS}"
+echo "OpenVLA-OFT max joint delta rad: ${OPENVLA_OFT_MAX_JOINT_DELTA_RAD}"
 if [ "${TESTMODE}" = "true" ]; then
   echo "Test mode enabled: this run will not persist any saved data."
 fi
@@ -134,6 +143,10 @@ args=(
   --robot.calibration_dir="${CALIBRATION_DIR}"
   --robot.left_arm_config.require_calibration=false
   --robot.right_arm_config.require_calibration=false
+  --robot.left_arm_config.speed_ratio="${PIPER_SPEED_RATIO}"
+  --robot.right_arm_config.speed_ratio="${PIPER_SPEED_RATIO}"
+  --robot.left_arm_config.high_follow="${PIPER_HIGH_FOLLOW}"
+  --robot.right_arm_config.high_follow="${PIPER_HIGH_FOLLOW}"
   --robot.left_arm_config.cameras='{ wrist: {type: intelrealsense, serial_number_or_name: "243322070942", width: 640, height: 480, fps: 30, warmup_s: 2}}'
   --robot.right_arm_config.cameras='{ wrist: {type: intelrealsense, serial_number_or_name: "243722071316", width: 640, height: 480, fps: 30, warmup_s: 2}, front: {type: intelrealsense, serial_number_or_name: "239622301704", width: 640, height: 480, fps: 30, warmup_s: 2}}'
   --policy.type=remote_client
@@ -143,6 +156,7 @@ args=(
   --dataset.num_episodes=20
   --dataset.episode_time_s=200
   --dataset.reset_time_s=0
+  --dataset.fps="${CONTROL_FPS}"
   --dataset.push_to_hub=false
   --policy_only_reset_pose_path="${RESET_POSE_PATH}"
   --policy_only_reset_duration_s=5
@@ -153,7 +167,7 @@ args=(
   --policy.host=103.237.28.254
   --policy.port="${PORT}"
   --policy.chunk_size=25
-  --policy.n_action_steps=25
+  --policy.n_action_steps="${N_ACTION_STEPS}"
   --policy.openvla_oft_smooth_actions="${OPENVLA_OFT_SMOOTH_ACTIONS}"
   --policy.openvla_oft_interpolate_start_steps="${OPENVLA_OFT_INTERPOLATE_START_STEPS}"
   --policy.openvla_oft_max_joint_delta_rad="${OPENVLA_OFT_MAX_JOINT_DELTA_RAD}"
