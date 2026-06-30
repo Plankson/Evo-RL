@@ -217,9 +217,9 @@ def smooth_openvla_oft_action_chunk(
     n_steps = smoothed.shape[0]
     interpolate_steps = min(int(config.openvla_oft_interpolate_start_steps), n_steps)
     if interpolate_steps > 0:
-        denom = max(1, interpolate_steps)
+        denom = float(interpolate_steps + 1)
         for i in range(interpolate_steps):
-            alpha = i / float(denom)
+            alpha = (i + 1) / denom
             smoothed[i] = current * (1.0 - alpha) + smoothed[i] * alpha
 
     gripper_idx = np.array([6, 13], dtype=np.int64)
