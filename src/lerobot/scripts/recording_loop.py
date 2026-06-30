@@ -430,7 +430,8 @@ def record_loop(
 
         selected_from_policy = act_processed_policy is not None and action_values is act_processed_policy
         action_values_for_robot = _convert_joint_positions_rad_to_deg(action_values)
-        if selected_from_policy:
+        policy_name = str(getattr(getattr(policy, "config", None), "policy_name", "")).lower().replace("_", "-")
+        if selected_from_policy and policy_name not in {"openvla-oft", "openvlaoft"}:
             action_values_for_robot = _apply_infer_pi0_gripper_logic(
                 policy_action=act_processed_policy,
                 robot_action=action_values_for_robot,

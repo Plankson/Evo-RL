@@ -26,6 +26,10 @@ def _uses_da3_image_list(policy_name: str) -> bool:
     return policy_name.lower() == "da3"
 
 
+def _is_openvla_oft_policy(policy_name: str | None) -> bool:
+    return (policy_name or "").lower().replace("_", "-") in {"openvla-oft", "openvlaoft"}
+
+
 def duplicate_current_frame_and_stack(frame: np.ndarray, count: int) -> np.ndarray:
     if count < 1:
         raise ValueError(f"Expected count >= 1, got {count}.")
@@ -61,6 +65,8 @@ def _default_state_layout_for_policy_name(policy_name: str) -> str:
         return "ace_policy"
     if policy_name in {"da3"}:
         return "da3"
+    if _is_openvla_oft_policy(policy_name):
+        return "openvla_oft"
     raise ValueError(
         f"Unsupported policy_name '{policy_name}' for automatic state layout selection."
     )
@@ -95,8 +101,10 @@ def split_state_vector(
 
     gripper = state[[6, 13]].numpy()
     state_layout = _default_state_layout_for_policy_name(policy_name)
-    if state_layout == "pi0":
+    if state_layout in {"pi0", "openvla_oft"}:
         joints = state[[0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12]].numpy()
+        if state_layout == "openvla_oft":
+            gripper = np.clip(gripper / 0.07, 0.0, 1.0)
     elif state_layout == "ace_policy":
         joints = torch.cat(
             (
@@ -161,7 +169,7 @@ def batch_to_client_observation(
         raise TypeError(f"Expected task to be a string, got {type(task)}")
 
     is_pi = _default_state_layout_for_policy_name(config.policy_name)
-    if is_pi=='pi0':
+    if is_pi in {"pi0", "openvla_oft"}:
         padding = np.ones((6,), dtype=np.float32)*-10000
     else:
         padding = np.ones((1,6), dtype=np.float32)*-10000
@@ -195,6 +203,9 @@ def normalize_remote_action_chunk(result: dict[str, Any], expected_action_dim: i
         action_chunk = np.concatenate(
             [action_chunk[..., :6], action_chunk[..., 7:8], action_chunk[..., 8:8+6], action_chunk[..., 15:16]], axis=-1
         )
+    if _is_openvla_oft_policy(policy_name):
+        action_chunk = action_chunk.copy()
+        action_chunk[..., [6, 13]] = np.clip(action_chunk[..., [6, 13]], 0.0, 1.0) * 0.07
     if policy_name=='ace_policy':
         action_chunk = np.concatenate(
             [action_chunk[..., :6], action_chunk[..., 7:8], action_chunk[..., 8:8+6], action_chunk[..., 15:16]], axis=-1

@@ -16,7 +16,7 @@ lerobot-setup-can --mode=setup --interfaces=can_left,can_right
 PROMPT="BAG ITEMS INTO PAPER BAG"
 # PROMPT="PUT THE PEN INTO THE PEN HOLDER"
 
-POLICY_NAME="pi0"
+POLICY_NAME="openvla-oft"
 # POLICY_NAME="ace_policy"
 PORT=1112
 # PORT=8080
