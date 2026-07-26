@@ -163,6 +163,24 @@ def _load_policy_only_reset_pose(pose_path: Path) -> dict[str, float]:
     return joint_pos
 
 
+def _save_policy_request_frame_ids(dataset: LeRobotDataset, episode_frame_ids: list[int]) -> None:
+    latest_episode = dataset.meta.latest_episode
+    for video_key in dataset.meta.video_keys:
+        chunk_index = latest_episode[f"videos/{video_key}/chunk_index"][0]
+        file_index = latest_episode[f"videos/{video_key}/file_index"][0]
+        from_timestamp = latest_episode[f"videos/{video_key}/from_timestamp"][0]
+        video_path = dataset.root / dataset.meta.video_path.format(
+            video_key=video_key,
+            chunk_index=chunk_index,
+            file_index=file_index,
+        )
+        id_list_path = video_path.with_suffix(".policy_frame_ids.json")
+        video_frame_offset = round(from_timestamp * dataset.fps)
+        video_frame_ids = json.loads(id_list_path.read_text()) if id_list_path.exists() else []
+        video_frame_ids.extend(video_frame_offset + frame_id for frame_id in episode_frame_ids)
+        id_list_path.write_text(json.dumps(video_frame_ids, indent=2) + "\n")
+
+
 def _slow_move_robot_to_pose(robot, target_pose: dict[str, float], duration_s: float) -> None:
     joint_keys = [key for key in robot.action_features if key.endswith(".pos") and key in target_pose]
     if not joint_keys:
@@ -206,6 +224,10 @@ class DatasetRecordConfig:
     num_episodes: int = 50
     # Encode frames in the dataset into video
     video: bool = True
+    # Camera keys to save in the dataset. None saves every configured camera.
+    record_camera_keys: list[str] | None = None
+    # Save MP4 frame IDs whose observations triggered a policy-server request.
+    save_policy_frame_ids: bool = False
     # Upload dataset to Hugging Face hub.
     push_to_hub: bool = True
     # Upload on private repository on the Hugging Face hub.
@@ -233,6 +255,10 @@ class DatasetRecordConfig:
     def __post_init__(self):
         if self.single_task is None:
             raise ValueError("You need to provide a task as argument in `single_task`.")
+        if self.save_policy_frame_ids and not self.video:
+            raise ValueError("`save_policy_frame_ids=true` requires `video=true`.")
+        if self.save_policy_frame_ids and self.video_encoding_batch_size != 1:
+            raise ValueError("`save_policy_frame_ids=true` requires `video_encoding_batch_size=1`.")
 
 
 @dataclass
@@ -382,6 +408,26 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             use_videos=cfg.dataset.video,
         ),
     )
+    policy_observation_features = dataset_features
+    if cfg.dataset.record_camera_keys is not None:
+        recorded_camera_keys = {
+            key if key.startswith("observation.images.") else f"observation.images.{key}"
+            for key in cfg.dataset.record_camera_keys
+        }
+        available_camera_keys = {
+            key for key, feature in dataset_features.items() if feature["dtype"] in {"image", "video"}
+        }
+        unknown_camera_keys = recorded_camera_keys - available_camera_keys
+        if unknown_camera_keys:
+            raise ValueError(
+                f"Unknown dataset record camera keys: {sorted(unknown_camera_keys)}. "
+                f"Available camera keys: {sorted(available_camera_keys)}"
+            )
+        dataset_features = {
+            key: feature
+            for key, feature in dataset_features.items()
+            if feature["dtype"] not in {"image", "video"} or key in recorded_camera_keys
+        }
     if cfg.intervention_state_machine_enabled and cfg.policy is not None and cfg.teleop is not None:
         action_names = dataset_features[ACTION]["names"]
         action_names = list(robot.action_features) if action_names is None else list(action_names)
@@ -519,6 +565,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             recorded_episodes = 0
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
                 events["episode_outcome"] = None
+                if cfg.dataset.save_policy_frame_ids:
+                    events["policy_request_frame_ids"] = []
                 log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
                 before_record_episode = getattr(cfg, "_before_record_episode", None)
                 if callable(before_record_episode):
@@ -552,6 +600,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     acp_inference=cfg.acp_inference,
                     communication_retry_timeout_s=cfg.communication_retry_timeout_s,
                     communication_retry_interval_s=cfg.communication_retry_interval_s,
+                    policy_observation_features=policy_observation_features,
                 )
 
                 if events["stop_recording"]:
@@ -648,6 +697,11 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                         {"episode_success": episode_success} if cfg.enable_episode_outcome_labeling else None
                     )
                     dataset.save_episode(extra_episode_metadata=extra_episode_metadata)
+                    if cfg.dataset.save_policy_frame_ids and not use_hdf5_episode_recorder:
+                        _save_policy_request_frame_ids(
+                            dataset,
+                            events["policy_request_frame_ids"],
+                        )
                 recorded_episodes += 1
     finally:
         log_say("Stop recording", cfg.play_sounds, blocking=True)

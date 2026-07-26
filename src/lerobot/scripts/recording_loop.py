@@ -175,6 +175,7 @@ def record_loop(
     acp_inference: ACPInferenceConfig | None = None,
     communication_retry_timeout_s: float = 2.0,
     communication_retry_interval_s: float = 0.1,
+    policy_observation_features: dict[str, dict] | None = None,
 ):
     if acp_inference is None:
         acp_inference = ACPInferenceConfig()
@@ -341,6 +342,11 @@ def record_loop(
 
         if dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
+            policy_observation_frame = (
+                build_dataset_frame(policy_observation_features, obs_processed, prefix=OBS_STR)
+                if policy_observation_features is not None
+                else observation_frame
+            )
 
         # Get action from policy and/or teleop
         act_processed_policy: RobotAction | None = None
@@ -351,8 +357,9 @@ def record_loop(
             and postprocessor is not None
             and not (intervention_enabled and intervention_state == INTERVENTION_STATE_ACTIVE)
         ):
+            policy_server_request_count_before = getattr(policy, "policy_server_request_count", 0)
             policy_action = _predict_policy_action_with_acp_inference(
-                observation_frame=observation_frame,
+                observation_frame=policy_observation_frame,
                 policy=policy,
                 device=get_safe_torch_device(policy.config.device),
                 preprocessor=preprocessor,
@@ -364,6 +371,11 @@ def record_loop(
                 cond_runtime_state=cond_policy_runtime_state,
                 uncond_runtime_state=uncond_policy_runtime_state,
             )
+            if (
+                getattr(policy, "policy_server_request_count", 0) > policy_server_request_count_before
+                and "policy_request_frame_ids" in events
+            ):
+                events["policy_request_frame_ids"].append(rollout_step_count)
             act_processed_policy = make_robot_action(policy_action, dataset.features)
 
         if isinstance(teleop, Teleoperator):

@@ -283,6 +283,7 @@ class RemoteClientPolicy(PreTrainedPolicy):
     def __init__(self, config: RemoteClientConfig, *inputs, **kwargs):
         super().__init__(config, *inputs, **kwargs)
         self._action_queue: deque[Tensor] = deque()
+        self.policy_server_request_count = 0
         self._client = self._make_client()
         print('success load remote client')
 
@@ -314,6 +315,7 @@ class RemoteClientPolicy(PreTrainedPolicy):
 
         observation = batch_to_client_observation(batch, self.config)
         result = self._get_client().infer(observation)
+        self.policy_server_request_count += 1
         # print('result:',result.keys(), result, batch['observation.state'])
         # import pdb;pdb.set_trace()
 
