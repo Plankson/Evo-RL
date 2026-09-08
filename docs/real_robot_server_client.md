@@ -170,11 +170,11 @@ python scripts/robot_io_server.py \
 ```bash
 conda activate evorl-ljy
 
-export OPENPI_ROOT=../pizero
+export OPENPI_ROOT=pizero
 export PYTHONPATH="$PWD/src:$OPENPI_ROOT/src:$OPENPI_ROOT/packages/openpi-client/src:${PYTHONPATH:-}"
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export HF_HUB_OFFLINE=1
-export DINOV2_LARGE_LOCAL_PATH=../dinov2-large
+export DINOV2_LARGE_LOCAL_PATH=dinov2-large
 
 lerobot-record-monitor-local-detector \
   --distributed_robot_io=true \
@@ -196,9 +196,9 @@ lerobot-record-monitor-local-detector \
   --policy.predictor_remote.host=103.237.28.254 \
   --policy.predictor_remote.port=63333 \
   --local_detector.monitor_config=pi05_real_robot_arrange_flower_evorl_detector \
-  --local_detector.monitor_dir=../detector/arrange_flower_detector.msgpack \
-  --local_detector.detector_conformal_path=../bands/arrange_flower_bands \
-  --local_detector.task_stats_path=../stats/arrange_flower.json \
+  --local_detector.monitor_dir=detector/arrange_flower_detector.msgpack \
+  --local_detector.detector_conformal_path=bands/arrange_flower_bands \
+  --local_detector.task_stats_path=stats/arrange_flower.json \
   --local_detector.task_index=0 \
   --local_detector.task_length_subset=all \
   --local_detector.history_len_detection=1 \

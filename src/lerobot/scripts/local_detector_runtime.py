@@ -27,7 +27,7 @@ class LocalDetectorConfig:
     detector_head_dir: str | None = None
     detector_head_model_name: str = "auto"
     history_len_detection: int = 1
-    conformal_timestep_frequency: int = 30
+    conformal_timestep_frequency: int = 20
     disable_warmup: bool = False
     payload_format: str = "infer_pi0"
     policy_name: str = "pi0"
@@ -129,6 +129,7 @@ def _load_monitor(cfg: LocalDetectorConfig):
             weight_path=None,
             encoder_weight_loader=train_cfg.weight_loader,
         )
+        print("monitor_dir=", cfg.monitor_dir, "is_file=", Path(cfg.monitor_dir).is_file(), "is_dir=", Path(cfg.monitor_dir).is_dir())
         if str(cfg.monitor_dir).strip():
             monitor = f_token_utils.load_monitor_weights_partial(monitor, str(cfg.monitor_dir))
 
