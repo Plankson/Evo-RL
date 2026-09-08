@@ -40,6 +40,8 @@ export PYTHONPATH="$OPENPI_ROOT/src:$OPENPI_ROOT/packages/openpi-client/src:${PY
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export HF_HUB_OFFLINE=1
 export DINOV2_LARGE_LOCAL_PATH=/data/dataset/hub/models--facebook--dinov2-large/snapshots/47b73eefe95e8d44ec3623f8890bd894b6ea2d6c
+export REAL_ROBOT_INFERENCE_ONLY=1
+export REAL_ROBOT_RUNTIME_REPO=trossen
 ```
 
 先确认 policy 和 monitor 在同一个注册表中：
@@ -170,11 +172,13 @@ python scripts/robot_io_server.py \
 ```bash
 conda activate evorl-ljy
 
-export OPENPI_ROOT=pizero
+export OPENPI_ROOT=/home/agilex/evorl-ljy/pizero
 export PYTHONPATH="$PWD/src:$OPENPI_ROOT/src:$OPENPI_ROOT/packages/openpi-client/src:${PYTHONPATH:-}"
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export HF_HUB_OFFLINE=1
 export DINOV2_LARGE_LOCAL_PATH=dinov2-large
+export REAL_ROBOT_INFERENCE_ONLY=1
+export REAL_ROBOT_RUNTIME_REPO=trossen
 
 lerobot-record-monitor-local-detector \
   --distributed_robot_io=true \
