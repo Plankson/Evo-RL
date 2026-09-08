@@ -57,6 +57,70 @@ from lerobot.utils.visualization_utils import log_rerun_data
 
 logger = logging.getLogger(__name__)
 
+
+class RiskState:
+    """Small cross-thread/process mailbox for the latest monitor outputs."""
+
+    def __init__(self, ctx=None):
+        value = (ctx or multiprocessing).Value
+        self.predictor_score = value("d", float("nan"))
+        self.predictor_threshold = value("d", float("nan"))
+        self.predictor_timestep = value("i", -1)
+        self.predictor_danger = value("i", 0)
+        self.predictor_valid = value("i", 0)
+        self.detector_score = value("d", float("nan"))
+        self.detector_threshold = value("d", float("nan"))
+        self.detector_timestep = value("i", -1)
+        self.detector_danger = value("i", 0)
+        self.detector_valid = value("i", 0)
+
+    def update(self, signal: dict[str, Any]) -> None:
+        source = str(signal.get("source", "")).lower()
+        prefix = "predictor" if source == "predictor" else "detector"
+        getattr(self, f"{prefix}_score").value = float(signal.get("score", float("nan")))
+        getattr(self, f"{prefix}_threshold").value = float(signal.get("threshold", float("nan")))
+        getattr(self, f"{prefix}_timestep").value = int(
+            signal.get("risk_timestep", signal.get("source_seq", -1))
+        )
+        getattr(self, f"{prefix}_danger").value = int(bool(signal.get("is_dangerous", False)))
+        getattr(self, f"{prefix}_valid").value = 1
+
+    def frame_values(self, control_timestep: int) -> dict[str, np.ndarray]:
+        return {
+            "complementary_info.control_timestep": np.array([control_timestep], dtype=np.float32),
+            "complementary_info.predictor_risk": np.array([self.predictor_score.value], dtype=np.float32),
+            "complementary_info.predictor_threshold": np.array([self.predictor_threshold.value], dtype=np.float32),
+            "complementary_info.predictor_timestep": np.array([self.predictor_timestep.value], dtype=np.float32),
+            "complementary_info.predictor_is_dangerous": np.array([self.predictor_danger.value], dtype=np.float32),
+            "complementary_info.predictor_valid": np.array([self.predictor_valid.value], dtype=np.float32),
+            "complementary_info.detector_risk": np.array([self.detector_score.value], dtype=np.float32),
+            "complementary_info.detector_threshold": np.array([self.detector_threshold.value], dtype=np.float32),
+            "complementary_info.detector_timestep": np.array([self.detector_timestep.value], dtype=np.float32),
+            "complementary_info.detector_is_dangerous": np.array([self.detector_danger.value], dtype=np.float32),
+            "complementary_info.detector_valid": np.array([self.detector_valid.value], dtype=np.float32),
+        }
+
+
+def add_risk_features(dataset_features: dict[str, Any]) -> None:
+    for name in (
+        "control_timestep",
+        "predictor_risk",
+        "predictor_threshold",
+        "predictor_timestep",
+        "predictor_is_dangerous",
+        "predictor_valid",
+        "detector_risk",
+        "detector_threshold",
+        "detector_timestep",
+        "detector_is_dangerous",
+        "detector_valid",
+    ):
+        dataset_features[f"complementary_info.{name}"] = {
+            "dtype": "float32",
+            "shape": (1,),
+            "names": [name],
+        }
+
 INFER_PI0_GRIPPER_CLOSE_THRESHOLD = 0.02
 INFER_PI0_GRIPPER_OPEN_THRESHOLD = 0.03
 INFER_PI0_GRIPPER_CLOSE_COMMAND = -1
@@ -206,6 +270,7 @@ def detector_process_worker(
     ready_event,
     failed_event,
     error_queue,
+    risk_state,
 ) -> None:
     logger.info("[DETECTOR] Process started.")
     try:
@@ -259,10 +324,20 @@ def detector_process_worker(
                         "source": "detector",
                         "is_dangerous": result.get("is_dangerous", False),
                         "score": result.get("score", 0.0),
-                        "timestamp": time.time(),
+                    "threshold": result.get("threshold", float("nan")),
+                    "risk_timestep": result.get("timestep", latest["seq"]),
+                    "timestamp": time.time(),
                         "source_seq": latest["seq"],
                     }
                 )
+                risk_state.update({
+                    "source": "detector",
+                    "is_dangerous": result.get("is_dangerous", False),
+                    "score": result.get("score", 0.0),
+                    "threshold": result.get("threshold", float("nan")),
+                    "risk_timestep": result.get("timestep", latest["seq"]),
+                    "source_seq": latest["seq"],
+                })
             except Exception as exc:
                 logger.error("[DETECTOR] Error in background loop: %s", exc)
                 time.sleep(0.01)
@@ -284,6 +359,7 @@ def detector_local_worker(
     ready_event,
     failed_event,
     error_queue,
+    risk_state,
 ) -> None:
     logger.info("[DETECTOR-LOCAL] Worker started.")
     try:
@@ -348,10 +424,20 @@ def detector_local_worker(
                         "source": "detector",
                         "is_dangerous": result.get("is_dangerous", False),
                         "score": result.get("score", 0.0),
+                        "threshold": result.get("threshold", float("nan")),
+                        "risk_timestep": result.get("timestep", latest["seq"]),
                         "timestamp": time.time(),
                         "source_seq": latest["seq"],
                     }
                 )
+                risk_state.update({
+                    "source": "detector",
+                    "is_dangerous": result.get("is_dangerous", False),
+                    "score": result.get("score", 0.0),
+                    "threshold": result.get("threshold", float("nan")),
+                    "risk_timestep": result.get("timestep", latest["seq"]),
+                    "source_seq": latest["seq"],
+                })
             except Exception as exc:
                 logger.error("[DETECTOR-LOCAL] Error in background loop: %s", exc)
                 time.sleep(0.01)
@@ -510,6 +596,7 @@ def record_loop_monitor(
             value: int = 0
 
         shared_danger = _DangerState(0)
+        risk_state = RiskState()
         detector_proc = threading.Thread(
             target=detector_local_worker,
             args=(
@@ -526,6 +613,7 @@ def record_loop_monitor(
                 detector_ready_event,
                 detector_failed_event,
                 detector_error_queue,
+                risk_state,
             ),
             daemon=True,
             name="detector-local-thread",
@@ -551,6 +639,7 @@ def record_loop_monitor(
         detector_failed_event = ctx.Event()
         detector_error_queue = ctx.Queue()
         shared_danger = ctx.Value("i", 0)
+        risk_state = RiskState(ctx)
         detector_proc = ctx.Process(
             target=detector_process_worker,
             args=(
@@ -567,6 +656,7 @@ def record_loop_monitor(
                 detector_ready_event,
                 detector_failed_event,
                 detector_error_queue,
+                risk_state,
             ),
             daemon=False,
         )
@@ -698,7 +788,15 @@ def record_loop_monitor(
                 act_processed_policy = make_robot_action(policy_action, dataset.features)
 
             if getattr(policy, "last_predictor_safety", None):
-                signal_queue.put({**policy.last_predictor_safety, "timestamp": time.time(), "source_seq": source_seq})
+                predictor_signal = {
+                    **policy.last_predictor_safety,
+                    "timestamp": time.time(),
+                    "source_seq": source_seq,
+                    "risk_timestep": policy.last_predictor_safety.get("timestep", source_seq),
+                    "threshold": policy.last_predictor_safety.get("threshold", float("nan")),
+                }
+                risk_state.update(predictor_signal)
+                signal_queue.put(predictor_signal)
                 policy.last_predictor_safety = None
 
             if isinstance(teleop, Teleoperator):
@@ -779,6 +877,7 @@ def record_loop_monitor(
                 dataset.features, policy_action_for_storage, prefix="complementary_info.policy_action"
             )
             frame = {**observation_frame, **action_frame, **policy_action_frame, "task": single_task}
+            frame.update(risk_state.frame_values(source_seq))
 
             if "complementary_info.is_intervention" in dataset.features:
                 frame["complementary_info.is_intervention"] = np.array([is_intervention], dtype=np.float32)

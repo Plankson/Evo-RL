@@ -128,6 +128,7 @@ class RemoteMonitorPolicy(PreTrainedPolicy):
             "source": "predictor",
             "is_dangerous": result.get("is_dangerous", False),
             "score": result.get("safety_score", 0.0),
+            "threshold": result.get("safety_threshold", result.get("threshold", float("nan"))),
         }
         
         # Extract actions

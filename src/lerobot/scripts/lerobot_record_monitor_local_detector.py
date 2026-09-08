@@ -21,7 +21,7 @@ from lerobot.scripts.lerobot_human_inloop_record import _HumanInloopFailureReset
 from lerobot.scripts.lerobot_record import RecordConfig
 from lerobot.scripts.local_detector_runtime import LocalDetectorConfig, validate_local_detector_paths
 from lerobot.scripts.recording_hil import PolicySyncDualArmExecutor
-from lerobot.scripts.recording_monitor import record_loop_monitor
+from lerobot.scripts.recording_monitor import add_risk_features, record_loop_monitor
 from lerobot.teleoperators import make_teleoperator_from_config
 from lerobot.utils.constants import ACTION
 from lerobot.utils.control_utils import init_keyboard_listener, sanity_check_dataset_name, sanity_check_dataset_robot_compatibility
@@ -149,6 +149,8 @@ def record_monitor_local_detector(cfg: RecordMonitorLocalDetectorConfig) -> LeRo
             "shape": (1,),
             "names": ["collector_policy_id"],
         }
+
+    add_risk_features(dataset_features)
 
     dataset = None
     listener = None

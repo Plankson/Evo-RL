@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import logging
 import multiprocessing
 import os
@@ -20,6 +21,9 @@ class LocalDetectorConfig:
     monitor_config: str
     monitor_dir: str
     detector_conformal_path: str
+    task_stats_path: str | None = None
+    task_index: int = 0
+    task_length_subset: str = "all"
     detector_head_dir: str | None = None
     detector_head_model_name: str = "auto"
     history_len_detection: int = 1
@@ -192,6 +196,13 @@ class LocalOpenPIDetectorRuntime:
         self.cfg = cfg
         self.monitor, self.obs_adapter = _load_monitor(cfg)
         self.conformal = ConformalSafetyManager.from_json_files(detector_path=cfg.detector_conformal_path)
+        self.reference_episode_length = None
+        if cfg.task_stats_path:
+            payload = json.loads(Path(cfg.task_stats_path).expanduser().read_text())
+            task = payload["tasks"][str(int(cfg.task_index))]
+            self.reference_episode_length = float(task["length"][cfg.task_length_subset]["mean"])
+            if not np.isfinite(self.reference_episode_length) or self.reference_episode_length <= 0:
+                raise ValueError(f"Invalid reference episode length: {self.reference_episode_length}")
         self._history_len = max(1, int(cfg.history_len_detection))
         self._feature_buffer: deque[Any] = deque(maxlen=self._history_len)
         self._serve_start_time = time.monotonic()
@@ -240,8 +251,12 @@ class LocalOpenPIDetectorRuntime:
         elapsed_seconds = max(0.0, time.monotonic() - self._serve_start_time)
         timestep = int(elapsed_seconds * max(1, int(self.cfg.conformal_timestep_frequency)))
 
-        threshold = self.conformal.detection_threshold_at(timestep)
-        is_dangerous = self.conformal.is_dangerous_detection(score_scalar, timestep=timestep)
+        threshold_timestep = timestep
+        if self.reference_episode_length is not None:
+            relative_time = min(timestep / self.reference_episode_length, 1.0)
+            threshold_timestep = int(relative_time * max(1, self.conformal.detection_band.values.size - 1))
+        threshold = self.conformal.detection_threshold_at(threshold_timestep)
+        is_dangerous = score_scalar > threshold
 
         return {
             "is_dangerous": bool(is_dangerous),
@@ -261,6 +276,9 @@ def validate_local_detector_paths(cfg: LocalDetectorConfig) -> None:
             raise ValueError(f"`{name}` must be provided for local detector mode")
         if not Path(path).exists():
             raise FileNotFoundError(f"{name} does not exist: {path}")
+
+    if cfg.task_stats_path and not Path(cfg.task_stats_path).exists():
+        raise FileNotFoundError(f"task_stats_path does not exist: {cfg.task_stats_path}")
 
     if cfg.detector_head_dir and not Path(cfg.detector_head_dir).exists():
         raise FileNotFoundError(f"detector_head_dir does not exist: {cfg.detector_head_dir}")
