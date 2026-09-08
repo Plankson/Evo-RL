@@ -145,10 +145,8 @@ server 端对应关系是：
 先在 robot 机器的另一个终端启动 RobotIO server（它独占真实机器人、CAN 和相机）：
 
 ```bash
-cd /data/users/liujingyuan/workspace/Evo-RL
-source /data/anaconda3/etc/profile.d/conda.sh
-conda activate lerobot
-lerobot-setup-can --mode=setup --interfaces=can_left,can_back_left,can_right,can_back_right
+conda activate evork-ljy
+lerobot-setup-can --mode=setup --interfaces=can_left,can_right
 
 python scripts/robot_io_server.py \
   --robot.type=bi_piper_follower \
@@ -157,8 +155,8 @@ python scripts/robot_io_server.py \
   --robot.right_arm_config.port=can_right \
   --robot.left_arm_config.require_calibration=false \
   --robot.right_arm_config.require_calibration=false \
-  --robot.left_arm_config.cameras='{ wrist: {type: intelrealsense, serial_number_or_name: "243322070942", width: 640, height: 480, fps: 30, warmup_s: 2}}' \
-  --robot.right_arm_config.cameras='{ wrist: {type: intelrealsense, serial_number_or_name: "243722071316", width: 640, height: 480, fps: 30, warmup_s: 2}, front: {type: intelrealsense, serial_number_or_name: "239622301704", width: 640, height: 480, fps: 30, warmup_s: 2}}' \
+  --robot.left_arm_config.cameras='{ wrist: {type: intelrealsense, serial_number_or_name: "346522074444", width: 640, height: 480, fps: 30, warmup_s: 2}}' \
+  --robot.right_arm_config.cameras='{ wrist: {type: intelrealsense, serial_number_or_name: "346522074314", width: 640, height: 480, fps: 30, warmup_s: 2}, front: {type: intelrealsense, serial_number_or_name: "239622301704", width: 640, height: 480, fps: 30, warmup_s: 2}}' \
   --obs_pub_address=tcp://127.0.0.1:5555 \
   --action_pull_address=tcp://127.0.0.1:5556 \
   --meta_rep_address=tcp://127.0.0.1:5557 \
@@ -170,15 +168,13 @@ python scripts/robot_io_server.py \
 `arrange_flower` 的完整命令，`<SERVER_IP>` 替换成 predictor server 的 IP：
 
 ```bash
-cd /data/users/liujingyuan/workspace/Evo-RL
-source /data/anaconda3/etc/profile.d/conda.sh
-conda activate lerobot
+conda activate evorl-ljy
 
-export OPENPI_ROOT=/data/users/liujingyuan/workspace/openpi_local
+export OPENPI_ROOT=../pizero
 export PYTHONPATH="$PWD/src:$OPENPI_ROOT/src:$OPENPI_ROOT/packages/openpi-client/src:${PYTHONPATH:-}"
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export HF_HUB_OFFLINE=1
-export DINOV2_LARGE_LOCAL_PATH=/data/dataset/hub/models--facebook--dinov2-large/snapshots/47b73eefe95e8d44ec3623f8890bd894b6ea2d6c
+export DINOV2_LARGE_LOCAL_PATH=../dinov2-large
 
 lerobot-record-monitor-local-detector \
   --distributed_robot_io=true \
@@ -191,8 +187,8 @@ lerobot-record-monitor-local-detector \
   --robot.right_arm_config.port=can_right \
   --robot.left_arm_config.require_calibration=false \
   --robot.right_arm_config.require_calibration=false \
-  --robot.left_arm_config.cameras='{ wrist: {type: intelrealsense, serial_number_or_name: "243322070942", width: 640, height: 480, fps: 30, warmup_s: 2}}' \
-  --robot.right_arm_config.cameras='{ wrist: {type: intelrealsense, serial_number_or_name: "243722071316", width: 640, height: 480, fps: 30, warmup_s: 2}, front: {type: intelrealsense, serial_number_or_name: "239622301704", width: 640, height: 480, fps: 30, warmup_s: 2}}' \
+  --robot.left_arm_config.cameras='{ wrist: {type: intelrealsense, serial_number_or_name: "346522074444", width: 640, height: 480, fps: 30, warmup_s: 2}}' \
+  --robot.right_arm_config.cameras='{ wrist: {type: intelrealsense, serial_number_or_name: "346522074314", width: 640, height: 480, fps: 30, warmup_s: 2}, front: {type: intelrealsense, serial_number_or_name: "239622301704", width: 640, height: 480, fps: 30, warmup_s: 2}}' \
   --policy.type=remote_monitor \
   --policy.predictor_remote.policy_name=pi05 \
   --policy.predictor_remote.chunk_size=50 \
