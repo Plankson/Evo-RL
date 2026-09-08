@@ -31,7 +31,15 @@ except ModuleNotFoundError:
             self.data = np.asarray([np.interp(np.linspace(0, 1, self.grid_size), np.linspace(0, 1, len(x)), x) for x in xs])
         def get_band(self, alpha): return np.quantile(self.data, 1 - alpha, axis=0)
         def save(self, path):
-            np.savez_compressed(path, grid=np.linspace(0, 1, self.grid_size), grid_size=np.array([self.grid_size]), band_mode=np.array([self.band_mode], dtype=object), all_resampled=self.data)
+            np.savez_compressed(
+                path,
+                grid=np.linspace(0, 1, self.grid_size),
+                grid_size=np.array([self.grid_size]),
+                band_mode=np.array([self.band_mode], dtype=object),
+                modulation_type=np.array([3]),
+                regression_type=np.array([1]),
+                all_resampled=self.data,
+            )
     LegacyTimePredictor = NormalizedTimePredictor
 
 
@@ -103,7 +111,7 @@ def main():
     p.add_argument("--score-head", default="safe_score", help="NPZ score-head suffix, usually safe_score")
     p.add_argument("--output-dir", type=Path, required=True)
     p.add_argument("--method", choices=["normalized_time", "legacy"], default="normalized_time")
-    p.add_argument("--mode", choices=["functional", "pointwise_quantile"], default="functional")
+    p.add_argument("--mode", choices=["functional", "pointwise_quantile"], default="pointwise_quantile")
     p.add_argument("--alphas", type=float, nargs="+", default=[.02, .05, .1, .15, .2, .25, .3])
     a = p.parse_args()
     a.output_dir.mkdir(parents=True, exist_ok=True)
