@@ -40,6 +40,11 @@ export PYTHONPATH="$OPENPI_ROOT/src:$OPENPI_ROOT/packages/openpi-client/src:${PY
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export HF_HUB_OFFLINE=1
 export DINOV2_LARGE_LOCAL_PATH=/data/dataset/hub/models--facebook--dinov2-large/snapshots/47b73eefe95e8d44ec3623f8890bd894b6ea2d6c
+
+# Optional Pi-Prob/SAFE baseline monitors. Keep disabled unless all paths below
+# are supplied; the normal detector/predictor path does not require them.
+export PI_PROB_ROOT=/data/users/liujingyuan/workspace/pi_prob
+export SAFE_ROOT=/data/users/liujingyuan/third_party/SAFE
 export REAL_ROBOT_INFERENCE_ONLY=1
 export REAL_ROBOT_RUNTIME_REPO=trossen
 ```
@@ -67,7 +72,7 @@ PY
 ```bash
 python scripts/serve_policy_with_monitor.py \
   --host=10.119.16.248 \
-  --policy_port=8108 \
+  --policy_port=8088 \
   --serve_mode=PREDICTOR_ONLY \
   --default_prompt="arrange the flower" \
   --policy.config=pi05_jax_vase_and_flowers_fc_v0 \
@@ -297,4 +302,62 @@ export PYTHONPATH=/data/users/qingyunpeng/code/openpi-main/src:...
 ```text
 Starting Brain Server ... on port 9991
 Local detector warmup complete
+```
+
+## 4. Policy server 上的 Pi-Prob baseline（可选）
+
+Pi-Prob baseline 和 predictor monitor 在同一个 policy server 进程中运行。每次
+请求复用 policy 的输入，在返回包中增加：
+
+```text
+baseline_risks.indep
+baseline_risks.logpzo
+baseline_risks.rnd
+baseline_risks.accel
+```
+
+每一项都包含 `score`、`threshold`、`is_dangerous` 和 `timestep`。其中 indep/logpzo
+使用 Pi0.5 的 `get_vlm_embedding()` 特征，rnd 额外使用 policy action chunk，accel
+运行 deterministic flow path 后计算 smoothness。
+
+server 脚本和 adapter：
+
+```text
+/data/users/liujingyuan/workspace/openpi_local/scripts/serve_policy_with_monitor.py
+/data/users/liujingyuan/workspace/openpi_local/scripts/pi_prob_baseline_runtime.py
+```
+
+在 server 命令中额外加入（以 arrange_flower 为例）：
+
+```bash
+--baselines.enabled=true \
+--baselines.device=cuda \
+--baselines.feature_dim=2048 \
+--baselines.feature_pool=mean_h \
+--baselines.action_dim=14 \
+--baselines.action_horizon=36 \
+--baselines.alpha=0.1 \
+--baselines.reference_episode_length=1000 \
+--baselines.indep.config_path=/data/users/liujingyuan/workspace/pi_prob/outputs/manifest_baselines/arrange_flower/seed_42/indep/train_logs/config.yaml \
+--baselines.indep.checkpoint_path=/data/users/liujingyuan/workspace/pi_prob/outputs/manifest_baselines/arrange_flower/seed_42/indep/train_logs/model_final.ckpt \
+--baselines.indep.band_path=/PATH/TO/arrange_flower/indep/classify_cp_functional__model_bands.json \
+--baselines.logpzo.config_path=/data/users/liujingyuan/workspace/pi_prob/outputs/manifest_baselines/arrange_flower/seed_42/logpzo/train_logs/config.yaml \
+--baselines.logpzo.checkpoint_path=/data/users/liujingyuan/workspace/pi_prob/outputs/manifest_baselines/arrange_flower/seed_42/logpzo/train_logs/model_final.ckpt \
+--baselines.logpzo.band_path=/PATH/TO/arrange_flower/logpzo/classify_cp_functional__model_bands.json \
+--baselines.rnd.config_path=/data/users/liujingyuan/workspace/pi_prob/outputs/manifest_baselines/arrange_flower/seed_42/rnd/train_logs/config.yaml \
+--baselines.rnd.checkpoint_path=/data/users/liujingyuan/workspace/pi_prob/outputs/manifest_baselines/arrange_flower/seed_42/rnd/train_logs/model_final.ckpt \
+--baselines.rnd.band_path=/PATH/TO/arrange_flower/rnd/classify_cp_functional__model_bands.json \
+--baselines.accel_band_path=/PATH/TO/arrange_flower/accel/classify_cp_functional__model_bands.json \
+--baselines.accel_prefix_steps=9 \
+--baselines.fm_num_steps=10
+```
+
+当前 baseline 实验目录里已有 indep/logpzo/rnd checkpoint；accel 还没有拟合 band，
+所以 `accel_band_path` 暂时不要传，或保持空字符串。baseline 未配置时，server
+完全不加载 PyTorch/SAFE 模型，不影响原来的 predictor+detector 部署。
+
+baseline adapter 读取的 band 可以是 JSON 文件，也可以是包含以下文件的目录：
+
+```text
+json/classify_cp_functional__model_bands.json
 ```
