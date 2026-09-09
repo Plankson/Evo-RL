@@ -33,6 +33,7 @@ class OpenPiWebsocketClient:
         self._unpackb = msgpack_numpy.unpackb
         self._api_key = api_key
         self._ws = None
+        self._metadata = None
 
     def _connect(self) -> None:
         headers = {"Authorization": f"Api-Key {self._api_key}"} if self._api_key else None
@@ -43,6 +44,13 @@ class OpenPiWebsocketClient:
             max_size=None,
             additional_headers=headers,
         )
+        # serve_policy_with_monitor sends one startup metadata frame before it
+        # accepts observations. Consume it here so the first infer() response
+        # is the action_out dictionary, rather than the metadata dictionary.
+        startup_frame = self._ws.recv()
+        if isinstance(startup_frame, str):
+            raise RuntimeError(f"Error receiving inference server metadata:\n{startup_frame}")
+        self._metadata = self._unpackb(startup_frame)
 
     def infer(self, obs: Dict) -> Dict:
         if self._ws is None:
@@ -129,6 +137,7 @@ class RemoteMonitorPolicy(PreTrainedPolicy):
             "is_dangerous": result.get("is_dangerous", False),
             "score": result.get("safety_score", 0.0),
             "threshold": result.get("safety_threshold", result.get("threshold", float("nan"))),
+            "timestep": result.get("timestep", result.get("safety_selection", {}).get("timestep", -1)),
         }
         
         # Extract actions
