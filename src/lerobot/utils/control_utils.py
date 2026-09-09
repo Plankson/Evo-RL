@@ -20,6 +20,7 @@
 import logging
 import os
 import select
+import signal
 import sys
 import termios
 import threading
@@ -72,11 +73,13 @@ class TTYKeyboardListener:
         intervention_toggle_key: str,
         episode_success_key: str | None,
         episode_failure_key: str | None,
+        interrupt_on_stop: bool,
     ):
         self.events = events
         self.intervention_toggle_key = intervention_toggle_key.lower()
         self.episode_success_key = episode_success_key.lower() if episode_success_key else None
         self.episode_failure_key = episode_failure_key.lower() if episode_failure_key else None
+        self.interrupt_on_stop = interrupt_on_stop
         self._fd = sys.stdin.fileno()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -153,9 +156,19 @@ class TTYKeyboardListener:
             self.events["rerecord_episode"] = True
             self.events["exit_early"] = True
         elif normalized == "ESC":
-            print("Escape key pressed. Stopping data recording...")
+            print("Escape key pressed. Saving the current episode and stopping data recording...")
+            self.events["save_before_stop"] = True
             self.events["stop_recording"] = True
             self.events["exit_early"] = True
+            if self.interrupt_on_stop:
+                os.kill(os.getpid(), signal.SIGINT)
+        elif normalized == "\x03":
+            print("Ctrl-C pressed. Saving the current episode and stopping data recording...")
+            self.events["save_before_stop"] = True
+            self.events["stop_recording"] = True
+            self.events["exit_early"] = True
+            if self.interrupt_on_stop:
+                os.kill(os.getpid(), signal.SIGINT)
         elif normalized == self.intervention_toggle_key:
             print(f"'{self.intervention_toggle_key}' key pressed. Toggling intervention mode...")
             self.events["toggle_intervention"] = True
@@ -224,6 +237,7 @@ def init_keyboard_listener(
     intervention_toggle_key: str = "i",
     episode_success_key: str | None = None,
     episode_failure_key: str | None = None,
+    interrupt_on_stop: bool = False,
 ):
     """
     Initializes a non-blocking keyboard listener for real-time user interaction.
@@ -245,6 +259,7 @@ def init_keyboard_listener(
     events["exit_early"] = False
     events["rerecord_episode"] = False
     events["stop_recording"] = False
+    events["save_before_stop"] = False
     events["toggle_intervention"] = False
     events["episode_outcome"] = None
 
@@ -263,7 +278,15 @@ def init_keyboard_listener(
                     events["rerecord_episode"] = True
                     events["exit_early"] = True
                 elif key == keyboard.Key.esc:
-                    print("Escape key pressed. Stopping data recording...")
+                    print("Escape key pressed. Saving the current episode and stopping data recording...")
+                    events["save_before_stop"] = True
+                    events["stop_recording"] = True
+                    events["exit_early"] = True
+                    if interrupt_on_stop:
+                        os.kill(os.getpid(), signal.SIGINT)
+                elif hasattr(key, "char") and key.char == "\x03":
+                    print("Ctrl-C pressed. Saving the current episode and stopping data recording...")
+                    events["save_before_stop"] = True
                     events["stop_recording"] = True
                     events["exit_early"] = True
                 elif hasattr(key, "char") and key.char and key.char.lower() == intervention_toggle_key.lower():
@@ -300,6 +323,7 @@ def init_keyboard_listener(
             intervention_toggle_key=intervention_toggle_key,
             episode_success_key=episode_success_key,
             episode_failure_key=episode_failure_key,
+            interrupt_on_stop=interrupt_on_stop,
         )
         listener.start()
         logging.warning(

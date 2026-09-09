@@ -2,6 +2,7 @@
 
 import time
 import logging
+import signal
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field
 from pprint import pformat
@@ -155,7 +156,7 @@ def record_monitor_local_detector(cfg: RecordMonitorLocalDetectorConfig) -> LeRo
     dataset = None
     listener = None
     policy_sync_executor = None
-    use_hdf5_episode_recorder = bool(getattr(cfg, "_save_hdf5_episodes", True))
+    use_hdf5_episode_recorder = bool(getattr(cfg, "_save_hdf5_episodes", False))
 
     try:
         if use_hdf5_episode_recorder:
@@ -245,7 +246,18 @@ def record_monitor_local_detector(cfg: RecordMonitorLocalDetectorConfig) -> LeRo
             intervention_toggle_key=cfg.intervention_toggle_key,
             episode_success_key=cfg.episode_success_key if cfg.enable_episode_outcome_labeling else None,
             episode_failure_key=cfg.episode_failure_key if cfg.enable_episode_outcome_labeling else None,
+            interrupt_on_stop=True,
         )
+        previous_sigint = signal.getsignal(signal.SIGINT)
+
+        def _handle_sigint(signum, frame):
+            del signum, frame
+            logging.info("Ctrl-C received. Saving the current LeRobot episode and stopping.")
+            events["save_before_stop"] = True
+            events["stop_recording"] = True
+            events["exit_early"] = True
+
+        signal.signal(signal.SIGINT, _handle_sigint)
 
         dataset_context = nullcontext() if use_hdf5_episode_recorder else VideoEncodingManager(dataset)
         with dataset_context:
@@ -291,11 +303,20 @@ def record_monitor_local_detector(cfg: RecordMonitorLocalDetectorConfig) -> LeRo
                 monitor_round_index += 1
 
                 if events["stop_recording"]:
-                    logging.info(
-                        "Stop recording requested; discarding buffered frames for episode %s without saving.",
-                        dataset.num_episodes,
-                    )
-                    dataset.clear_episode_buffer()
+                    if events.get("save_before_stop"):
+                        episode_success = resolve_episode_success_label(
+                            explicit_label=events.get("episode_outcome"),
+                            default_label=cfg.default_episode_success,
+                            require_label=False,
+                        )
+                        extra_episode_metadata = (
+                            {"episode_success": episode_success} if episode_success is not None else None
+                        )
+                        logging.info("Stop recording requested; saving buffered episode %s before exit.", dataset.num_episodes)
+                        dataset.save_episode(extra_episode_metadata=extra_episode_metadata)
+                    else:
+                        logging.info("Stop recording requested; discarding buffered episode %s.", dataset.num_episodes)
+                        dataset.clear_episode_buffer()
                     break
 
                 episode_success = None
@@ -321,6 +342,10 @@ def record_monitor_local_detector(cfg: RecordMonitorLocalDetectorConfig) -> LeRo
                     events["episode_outcome"] = None
                     dataset.clear_episode_buffer()
                     continue
+
+                # s/f already ended the loop and are handled below as a normal
+                # labeled episode. The next record_loop creates a fresh local
+                # detector runtime and resets the remote policy client state.
 
                 if cfg.test_mode:
                     logging.info(
@@ -354,6 +379,8 @@ def record_monitor_local_detector(cfg: RecordMonitorLocalDetectorConfig) -> LeRo
 
         if listener and hasattr(listener, "stop"):
             listener.stop()
+        if "previous_sigint" in locals():
+            signal.signal(signal.SIGINT, previous_sigint)
 
         if cfg.dataset.push_to_hub and use_hdf5_episode_recorder:
             logging.warning("Ignoring `dataset.push_to_hub=true` because HDF5 episode saving is enabled.")

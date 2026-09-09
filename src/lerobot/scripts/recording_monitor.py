@@ -907,7 +907,9 @@ def record_loop_monitor(
     finally:
         stop_event.set()
         if use_local_detector:
-            detector_proc.join()
+            detector_proc.join(timeout=2.0)
+            if detector_proc.is_alive():
+                logger.warning("Local detector did not stop within 2s; leaving daemon thread to exit with recorder.")
         else:
             detector_proc.join(timeout=2.0)
         alarm_proc.join(timeout=2.0)
