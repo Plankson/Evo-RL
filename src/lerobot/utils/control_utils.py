@@ -352,7 +352,13 @@ def sanity_check_dataset_name(repo_id, policy_cfg):
     Raises:
         ValueError: If the naming convention is violated.
     """
-    _, dataset_name = repo_id.split("/")
+    # Local recording datasets commonly use a single directory name
+    # (e.g. ``arrange_flower``), while Hub ids use ``namespace/name``.
+    # The eval_ naming convention only applies to the latter; requiring a
+    # slash here incorrectly rejects valid local LeRobot datasets.
+    if "/" not in repo_id:
+        return
+    dataset_name = repo_id.rsplit("/", 1)[1]
     # either repo_id doesnt start with "eval_" and there is no policy
     # or repo_id starts with "eval_" and there is a policy
 

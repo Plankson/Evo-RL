@@ -361,3 +361,43 @@ baseline adapter 读取的 band 可以是 JSON 文件，也可以是包含以下
 ```text
 json/classify_cp_functional__model_bands.json
 ```
+
+## 5. 可视化已保存的 LeRobot monitor episode
+
+`visualize_real_robot_monitor_dataset.py` 读取标准 LeRobot v3 数据集，不读取
+HDF5。数据集目录必须直接包含 `meta/info.json`、`data/` 和 `videos/`，并且需要
+包含 recorder 写入的 `complementary_info.predictor_*` 和
+`complementary_info.detector_*` 字段。
+
+脚本路径：
+
+```text
+/data/users/liujingyuan/workspace/Evo-RL/scripts/visualize_real_robot_monitor_dataset.py
+```
+
+运行单个 episode：
+
+```bash
+cd /data/users/liujingyuan/workspace/Evo-RL
+source /data/anaconda3/etc/profile.d/conda.sh
+conda activate lerobot
+
+PYTHONPATH=$PWD/src \
+MPLCONFIGDIR=/tmp/mpl \
+python scripts/visualize_real_robot_monitor_dataset.py \
+  --dataset-path /PATH/TO/lerobot_dataset \
+  --episode 0 \
+  --output /PATH/TO/episode_0_monitor.mp4 \
+  --fps 30
+```
+
+脚本会自动选择包含 `right_front`、`front`、`cam_high`、`head` 或 `global` 的
+相机字段。需要指定相机时加入：
+
+```bash
+--camera-key observation.images.right_front
+```
+
+输出视频布局为：左侧真实头部/前置相机，右上 predictor risk 与 predictor band，
+右下 detector risk 与 detector band。横轴使用 `control_timestep`，标题中同时显示
+对应的 predictor/detector prediction timestep。

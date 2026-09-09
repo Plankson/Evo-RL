@@ -155,20 +155,52 @@ def _write_video(frames: Iterable[np.ndarray], output: Path, fps: int) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo-id", required=True, help="Dataset name, or the final directory name under --root")
-    parser.add_argument("--root", type=Path, required=True, help="Local LeRobot dataset directory")
+    parser.add_argument(
+        "--dataset-path",
+        type=Path,
+        default=None,
+        help="Actual local LeRobot dataset directory containing meta/, data/ and videos/.",
+    )
+    parser.add_argument("--repo-id", default=None, help="LeRobot repo id (legacy form; use with --root)")
+    parser.add_argument("--root", type=Path, default=None, help="Local LeRobot dataset directory (legacy alias)")
     parser.add_argument("--episode", type=int, default=0, help="Episode index to render")
     parser.add_argument("--camera-key", default=None, help="Camera feature key; auto-detected when omitted")
     parser.add_argument("--output", type=Path, required=True, help="Output MP4 path")
     parser.add_argument("--fps", type=int, default=30)
     args = parser.parse_args()
 
-    dataset = LeRobotDataset(repo_id=args.repo_id, root=args.root, episodes=[args.episode])
+    if args.dataset_path is not None and (args.root is not None or args.repo_id is not None):
+        parser.error("Use --dataset-path by itself, or use the legacy --repo-id with --root.")
+    if args.dataset_path is not None:
+        dataset_path = args.dataset_path.expanduser().resolve()
+        repo_id = dataset_path.name
+    elif args.root is not None and args.repo_id is not None:
+        dataset_path = args.root.expanduser().resolve()
+        repo_id = args.repo_id
+    else:
+        parser.error("Provide --dataset-path /path/to/lerobot_dataset.")
+    if not (dataset_path / "meta" / "info.json").is_file():
+        raise FileNotFoundError(f"Not a LeRobot dataset (missing meta/info.json): {dataset_path}")
+
+    dataset = LeRobotDataset(repo_id=repo_id, root=dataset_path, episodes=[args.episode])
     camera_key = _choose_camera(dataset, args.camera_key)
     dataset._ensure_hf_dataset_loaded()
     rows = dataset.hf_dataset
     if len(rows) == 0:
         raise RuntimeError(f"Episode {args.episode} contains no frames")
+
+    missing_fields = [
+        field
+        for fields in RISK_FIELDS.values()
+        for field in fields[:2]
+        if field not in dataset.features
+    ]
+    if missing_fields:
+        raise KeyError(
+            "This dataset does not contain monitor risk fields: "
+            + ", ".join(missing_fields)
+            + ". It must be recorded with lerobot-record-monitor-local-detector."
+        )
 
     x = np.asarray([_number(row, "complementary_info.control_timestep", i) for i, row in enumerate(rows)])
     values = {}
