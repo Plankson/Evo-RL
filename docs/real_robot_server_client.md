@@ -213,7 +213,7 @@ lerobot-record-monitor-local-detector \
   --local_detector.history_len_detection=1 \
   --local_detector.conformal_timestep_frequency=30 \
   --dataset.repo_id=arrange_flower \
-  --dataset.root=~/evorl_dataset/arrange_flower \
+  --dataset.root=/home/agilex/evorl_dataset/arrange_flower \
   --dataset.single_task="arrange flower" \
   --dataset.num_episodes=20 \
   --dataset.episode_time_s=200 \
@@ -385,10 +385,11 @@ conda activate lerobot
 PYTHONPATH=$PWD/src \
 MPLCONFIGDIR=/tmp/mpl \
 python scripts/visualize_real_robot_monitor_dataset.py \
-  --dataset-path /PATH/TO/lerobot_dataset \
+  --dataset-path ~/evorl_dataset/arrange_flower \
   --episode 0 \
-  --output /PATH/TO/episode_0_monitor.mp4 \
-  --fps 30
+  --output outputs/episode_0_monitor.mp4 \
+  --fps 30 \
+  --video-backend pyav
 ```
 
 脚本会自动选择包含 `right_front`、`front`、`cam_high`、`head` 或 `global` 的
@@ -401,3 +402,6 @@ python scripts/visualize_real_robot_monitor_dataset.py \
 输出视频布局为：左侧真实头部/前置相机，右上 predictor risk 与 predictor band，
 右下 detector risk 与 detector band。横轴使用 `control_timestep`，标题中同时显示
 对应的 predictor/detector prediction timestep。
+
+脚本默认使用 `pyav` 解码。若使用 `torchcodec`，真机环境必须正确安装兼容版本的
+FFmpeg 动态库；出现 `Could not load libtorchcodec` 时保持 `--video-backend pyav` 即可。

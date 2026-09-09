@@ -167,6 +167,12 @@ def main() -> None:
     parser.add_argument("--camera-key", default=None, help="Camera feature key; auto-detected when omitted")
     parser.add_argument("--output", type=Path, required=True, help="Output MP4 path")
     parser.add_argument("--fps", type=int, default=30)
+    parser.add_argument(
+        "--video-backend",
+        choices=("pyav", "torchcodec", "video_reader"),
+        default="pyav",
+        help="LeRobot video decoder. pyav avoids torchcodec/FFmpeg shared-library issues.",
+    )
     args = parser.parse_args()
 
     if args.dataset_path is not None and (args.root is not None or args.repo_id is not None):
@@ -182,7 +188,12 @@ def main() -> None:
     if not (dataset_path / "meta" / "info.json").is_file():
         raise FileNotFoundError(f"Not a LeRobot dataset (missing meta/info.json): {dataset_path}")
 
-    dataset = LeRobotDataset(repo_id=repo_id, root=dataset_path, episodes=[args.episode])
+    dataset = LeRobotDataset(
+        repo_id=repo_id,
+        root=dataset_path,
+        episodes=[args.episode],
+        video_backend=args.video_backend,
+    )
     camera_key = _choose_camera(dataset, args.camera_key)
     dataset._ensure_hf_dataset_loaded()
     rows = dataset.hf_dataset

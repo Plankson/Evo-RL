@@ -5,6 +5,7 @@ import logging
 import signal
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from pprint import pformat
 
 from lerobot.configs import parser
@@ -72,6 +73,10 @@ class RecordMonitorLocalDetectorConfig(RecordConfig):
 def record_monitor_local_detector(cfg: RecordMonitorLocalDetectorConfig) -> LeRobotDataset:
     init_logging()
     validate_local_detector_paths(cfg.local_detector)
+
+    if cfg.dataset.root is not None:
+        cfg.dataset.root = Path(cfg.dataset.root).expanduser().resolve()
+        logging.info("Resolved LeRobot dataset root: %s", cfg.dataset.root)
 
     if cfg.require_episode_success_label and not cfg.enable_episode_outcome_labeling:
         raise ValueError("`require_episode_success_label=true` requires `enable_episode_outcome_labeling=true`.")
