@@ -38,7 +38,7 @@ def _to_monitor_training_schema(
         joints = np.asarray(joints, dtype=np.float32)
         gripper = np.asarray(gripper, dtype=np.float32)
         if joints.ndim == 1 and gripper.ndim == 1 and joints.size == 12 and gripper.size == 2:
-            inputs["state.joints"] = np.concatenate(
+            inputs["state"] = np.concatenate(
                 [joints[:6], gripper[:1], joints[6:], gripper[1:]], axis=0
             )
     return inputs
