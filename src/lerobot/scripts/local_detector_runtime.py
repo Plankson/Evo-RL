@@ -16,6 +16,34 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+def _to_monitor_training_schema(
+    raw_obs: dict[str, Any], *, merge_state_gripper: bool
+) -> dict[str, Any]:
+    """Convert the websocket-style local payload to the detector training schema."""
+    inputs = dict(raw_obs)
+    images = inputs.get("images")
+    if isinstance(images, dict):
+        aliases = {
+            "global_image": "cam_high",
+            "left_image": "cam_left_wrist",
+            "right_image": "cam_right_wrist",
+        }
+        for target, source in aliases.items():
+            if target not in inputs and source in images:
+                inputs[target] = images[source]
+
+    joints = inputs.get("state.joints")
+    gripper = inputs.get("state.gripper_w")
+    if merge_state_gripper and joints is not None and gripper is not None:
+        joints = np.asarray(joints, dtype=np.float32)
+        gripper = np.asarray(gripper, dtype=np.float32)
+        if joints.ndim == 1 and gripper.ndim == 1 and joints.size == 12 and gripper.size == 2:
+            inputs["state.joints"] = np.concatenate(
+                [joints[:6], gripper[:1], joints[6:], gripper[1:]], axis=0
+            )
+    return inputs
+
+
 @dataclass
 class LocalDetectorConfig:
     monitor_config: str
@@ -47,15 +75,16 @@ class LocalDetectorConfig:
 
 
 class _MonitorObservationAdapter:
-    def __init__(self, transform):
+    def __init__(self, transform, *, merge_state_gripper: bool = False):
         self._transform = transform
+        self._merge_state_gripper = merge_state_gripper
 
     def __call__(self, raw_obs: dict[str, Any]):
         import jax
         import jax.numpy as jnp
         from openpi.models import model as _model
 
-        inputs = jax.tree.map(lambda x: x, raw_obs)
+        inputs = jax.tree.map(lambda x: x, _to_monitor_training_schema(raw_obs, merge_state_gripper=self._merge_state_gripper))
         inputs = self._transform(inputs)
 
         def _batch_leaf(x):
@@ -147,7 +176,14 @@ def _load_monitor(cfg: LocalDetectorConfig):
         monitor, _ = f_token_utils.build_monitor(train_cfg, rng)
 
     monitor = f_token_utils.cast_module_to_bfloat16(monitor)
-    obs_adapter = _MonitorObservationAdapter(_build_monitor_input_transform(train_cfg))
+    obs_adapter = _MonitorObservationAdapter(
+        _build_monitor_input_transform(train_cfg),
+        merge_state_gripper=cfg.monitor_config in {
+            "pi05_real_robot_arrange_flower_evorl_detector",
+            "pi05_real_robot_stack_plates_evorl_detector",
+            "pi05_real_robot_pick_cubes_evorl_detector",
+        },
+    )
     return monitor, obs_adapter
 
 
